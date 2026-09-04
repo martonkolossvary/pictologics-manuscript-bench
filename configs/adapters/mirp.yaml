@@ -15,3 +15,7 @@ environment_locks:
     path: "reproducibility/environment-locks/darwin-arm64/mirp.txt"
     sha256: "9114e23c91221c17a3eb2c56bee78db432a1abe751c3a32af31306d2fa28f3a4"
     freeze_sha256: "d3b67ae7dbe6accb82c9ccdd4d415c8319ec9f00d7c8a36ccbf694712df1f559"
+  Windows-AMD64:
+    path: "reproducibility/environment-locks/windows-amd64/mirp.txt"
+    sha256: "633e5deaf2239f94e38911c4f0978328836be0d051204a643f936e160f74ea83"
+    freeze_sha256: "5488a7ffa0817f1afc845248f8c2a343011cb5a12dcd853ea230f4146185b66a"

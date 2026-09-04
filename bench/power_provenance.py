@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import ctypes
 from pathlib import Path
 import platform
 import re
@@ -12,6 +13,12 @@ from typing import Any
 
 
 PMSET_ENERGY_MODES = {0: "automatic", 1: "low_power", 2: "high_power"}
+WINDOWS_POWER_SCHEME_NAMES = {
+    "a1841308-3541-4fab-bc81-f71556f20b4a": "power_saver",
+    "381b4222-f694-41f0-9685-ff5bb260df2e": "balanced",
+    "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c": "high_performance",
+    "e9a42b02-d5df-448d-aa00-03f14749eb61": "ultimate_performance",
+}
 TASK_POWER_MODE_ATTEMPTS = 3
 TASK_POWER_MODE_RETRY_SECONDS = 0.05
 
@@ -176,35 +183,99 @@ def _darwin_task_power_state() -> dict[str, Any]:
     }
 
 
+def _windows_system_power_status() -> dict[str, Any]:
+    """Read AC/battery state without localized command output."""
+
+    class SystemPowerStatus(ctypes.Structure):
+        _fields_ = [
+            ("ac_line_status", ctypes.c_ubyte),
+            ("battery_flag", ctypes.c_ubyte),
+            ("battery_life_percent", ctypes.c_ubyte),
+            ("battery_saver", ctypes.c_ubyte),
+            ("battery_life_time", ctypes.c_uint32),
+            ("battery_full_life_time", ctypes.c_uint32),
+        ]
+
+    status = SystemPowerStatus()
+    try:
+        succeeded = bool(
+            ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(status))
+        )
+    except (AttributeError, OSError):
+        succeeded = False
+    if not succeeded:
+        return {
+            "power_source": None,
+            "battery_saver": None,
+            "battery_life_percent": None,
+            "battery_flag": None,
+            "system_power_status_available": False,
+        }
+    power_source = {0: "Battery Power", 1: "AC Power"}.get(status.ac_line_status)
+    return {
+        "power_source": power_source,
+        "battery_saver": bool(status.battery_saver),
+        "battery_life_percent": (
+            None if status.battery_life_percent == 255 else status.battery_life_percent
+        ),
+        "battery_flag": status.battery_flag,
+        "system_power_status_available": True,
+    }
+
+
 def _windows_task_power_state() -> dict[str, Any]:
     errors: list[str] = []
+    power_scheme_guid = None
     power_plan = None
     completed = _completed(["powercfg", "/getactivescheme"])
     if completed is not None and completed.returncode == 0:
+        guid_match = re.search(
+            r"\b([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\b",
+            completed.stdout or "",
+            flags=re.IGNORECASE,
+        )
+        if guid_match:
+            power_scheme_guid = guid_match.group(1).lower()
         match = re.search(r"\(([^()]*)\)\s*$", completed.stdout or "")
         if match:
             power_plan = match.group(1).strip()
-    if not power_plan:
+    if not power_scheme_guid:
         errors.append("active_power_plan_unavailable")
+    system_power = _windows_system_power_status()
+    if system_power["power_source"] is None:
+        errors.append("power_source_unavailable")
+    canonical_plan = WINDOWS_POWER_SCHEME_NAMES.get(power_scheme_guid or "")
+    mode = canonical_plan or power_plan or power_scheme_guid
+    tag_component = canonical_plan or (
+        f"custom-{power_scheme_guid[:12]}" if power_scheme_guid else None
+    )
     return {
         "power_mode_tag": (
-            f"windows-power-plan-{_slug(power_plan)}"
-            if power_plan
-            else "windows-power-plan-unavailable"
+            f"windows-power-scheme-{_slug(tag_component)}"
+            if tag_component
+            else "windows-power-scheme-unavailable"
         ),
-        "energy_mode": power_plan,
+        "energy_mode": mode,
         "energy_mode_observation_status": (
-            "observed" if power_plan else "unavailable"
+            "observed" if power_scheme_guid else "unavailable"
         ),
-        "power_source": None,
+        "power_source": system_power["power_source"],
         "pmset_lowpowermode": None,
-        "probe_source": "powercfg_active_scheme" if power_plan else None,
+        "power_scheme_guid": power_scheme_guid,
+        "power_scheme_name": power_plan,
+        "battery_saver": system_power["battery_saver"],
+        "battery_life_percent": system_power["battery_life_percent"],
+        "probe_source": "powercfg_active_scheme" if power_scheme_guid else None,
         "probe_attempts": 1,
         "probe_errors": errors,
         "probe_diagnostics": {
             "powercfg_returncode": (
                 None if completed is None else int(completed.returncode)
-            )
+            ),
+            "system_power_status_available": system_power[
+                "system_power_status_available"
+            ],
+            "battery_flag": system_power["battery_flag"],
         },
     }
 
@@ -212,9 +283,7 @@ def _windows_task_power_state() -> dict[str, Any]:
 def _linux_task_power_state() -> dict[str, Any]:
     errors: list[str] = []
     governor = None
-    governor_path = Path(
-        "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"
-    )
+    governor_path = Path("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
     try:
         governor = governor_path.read_text(encoding="utf-8").strip() or None
     except OSError:
@@ -226,9 +295,7 @@ def _linux_task_power_state() -> dict[str, Any]:
             else "linux-power-mode-unavailable"
         ),
         "energy_mode": governor,
-        "energy_mode_observation_status": (
-            "observed" if governor else "unavailable"
-        ),
+        "energy_mode_observation_status": ("observed" if governor else "unavailable"),
         "power_source": None,
         "pmset_lowpowermode": None,
         "probe_source": "linux_cpu0_scaling_governor" if governor else None,
@@ -299,11 +366,7 @@ def _summary(tags: list[str], session_count: int) -> dict[str, Any]:
     unavailable = not tags or all("unavailable" in tag for tag in tags)
     mixed = len(tags) > 1 or any("mixed" in tag for tag in tags)
     classification = (
-        "unavailable"
-        if unavailable
-        else "single_mode"
-        if not mixed
-        else "mixed_mode"
+        "unavailable" if unavailable else "single_mode" if not mixed else "mixed_mode"
     )
     contribution_tag = (
         "power-mode-unavailable"

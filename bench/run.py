@@ -112,10 +112,7 @@ def _benchmark_thread_count(physical_cores: Any = None) -> int:
         count = int(physical_cores)
     except (TypeError, ValueError):
         count = int(
-            psutil.cpu_count(logical=False)
-            or psutil.cpu_count()
-            or os.cpu_count()
-            or 1
+            psutil.cpu_count(logical=False) or psutil.cpu_count() or os.cpu_count() or 1
         )
     return max(1, count)
 
@@ -133,6 +130,8 @@ def _benchmark_thread_policy(physical_cores: Any = None) -> Dict[str, Any]:
         "concurrent_adapter_processes": 1,
         "environment": _benchmark_thread_environment(count),
     }
+
+
 BENCHMARK_INITIALIZATION_ENV = {
     "PICTOLOGICS_DISABLE_WARMUP": "1",
 }
@@ -363,11 +362,16 @@ def _benchmark_machine_identity(machine: Mapping[str, Any]) -> Dict[str, Any]:
         # mode change must be visible in results without making a safe resume
         # impossible.  Operator-frozen settings remain fingerprint-bound.
         dynamic_observations = {
+            "battery_life_percent",
+            "battery_saver",
             "energy_mode",
             "pmset_lowpowermode",
             "energy_mode_observation_status",
+            "power_scheme_guid",
+            "power_scheme_name",
             "power_mode_tag",
             "power_state_probe_errors",
+            "sleep_prevention_active",
         }
         identity["host_settings"] = {
             key: value
@@ -429,14 +433,8 @@ def _task_power_provenance(
 
     probe_errors = list(
         dict.fromkeys(
-            [
-                f"start:{value}"
-                for value in list(start.get("probe_errors") or [])
-            ]
-            + [
-                f"end:{value}"
-                for value in list(end.get("probe_errors") or [])
-            ]
+            [f"start:{value}" for value in list(start.get("probe_errors") or [])]
+            + [f"end:{value}" for value in list(end.get("probe_errors") or [])]
         )
     )
     return {
@@ -459,6 +457,10 @@ def _task_power_provenance(
         ),
         "host_power_source": stable_value("power_source"),
         "host_pmset_lowpowermode": stable_value("pmset_lowpowermode"),
+        "host_power_scheme_guid": stable_value("power_scheme_guid"),
+        "host_power_scheme_name": stable_value("power_scheme_name"),
+        "host_battery_saver": stable_value("battery_saver"),
+        "host_battery_life_percent": stable_value("battery_life_percent"),
         "host_power_probe_errors": probe_errors,
         "host_power_probe_diagnostics": {
             "start": start.get("probe_diagnostics"),
@@ -500,11 +502,27 @@ def _rss_bytes(process: psutil.Process) -> int:
 
 
 def _safe_cpu_time(process: psutil.Process) -> Optional[float]:
+    """Return sampled CPU time for the adapter process and its descendants."""
+
+    processes = [process]
     try:
-        times = process.cpu_times()
-        return float(times.user + times.system)
-    except Exception:
-        return None
+        processes.extend(process.children(recursive=True))
+    except (psutil.Error, OSError):
+        pass
+    total = 0.0
+    observed = False
+    seen: set[int] = set()
+    for member in processes:
+        try:
+            if member.pid in seen:
+                continue
+            seen.add(member.pid)
+            times = member.cpu_times()
+        except (psutil.Error, OSError):
+            continue
+        total += float(times.user + times.system)
+        observed = True
+    return total if observed else None
 
 
 class AdapterProcessError(RuntimeError):
@@ -939,8 +957,7 @@ def run_adapter_process(
                 benchmark_workload
             ):
                 raise UnsupportedTaskError(
-                    f"{name} does not declare support for workload "
-                    f"{benchmark_workload}"
+                    f"{name} does not declare support for workload {benchmark_workload}"
                 )
             unsupported = [
                 family for family in families if not capabilities.supports(family)
@@ -1095,11 +1112,7 @@ def run_adapter_process(
             )
         timing = {}
     host_wall = _safe_float(host.get("host_wall_time_sec")) or 0.0
-    duration = (
-        _safe_float(timing.get("duration_sec"))
-        if timed
-        else host_wall
-    )
+    duration = _safe_float(timing.get("duration_sec")) if timed else host_wall
     cpu_time = (
         _safe_float(timing.get("cpu_time_sec"))
         if timed
@@ -1129,23 +1142,15 @@ def run_adapter_process(
         "calls_per_observation": _safe_int(timing.get("calls_per_observation")) or 0,
         "calibration_calls": _safe_int(timing.get("calibration_calls")) or 0,
         "calibration_rounds": _safe_int(timing.get("calibration_rounds")) or 0,
-        "calibration_duration_sec": _safe_float(
-            timing.get("calibration_duration_sec")
-        )
+        "calibration_duration_sec": _safe_float(timing.get("calibration_duration_sec"))
         or 0.0,
-        "calibration_cpu_time_sec": _safe_float(
-            timing.get("calibration_cpu_time_sec")
-        )
+        "calibration_cpu_time_sec": _safe_float(timing.get("calibration_cpu_time_sec"))
         or 0.0,
-        "calibration_per_call_sec": _safe_float(
-            timing.get("calibration_per_call_sec")
-        ),
+        "calibration_per_call_sec": _safe_float(timing.get("calibration_per_call_sec")),
         "calibration_headroom_factor": _safe_float(
             timing.get("calibration_headroom_factor")
         ),
-        "calibration_stability_cv": _safe_float(
-            timing.get("calibration_stability_cv")
-        ),
+        "calibration_stability_cv": _safe_float(timing.get("calibration_stability_cv")),
         "calibration_stability_span": _safe_float(
             timing.get("calibration_stability_span")
         ),
@@ -1153,17 +1158,11 @@ def run_adapter_process(
         "minimum_observation_window_sec": _safe_float(
             timing.get("minimum_observation_window_sec")
         ),
-        "result_equivalence_checks": _safe_int(
-            timing.get("result_equivalence_checks")
-        )
+        "result_equivalence_checks": _safe_int(timing.get("result_equivalence_checks"))
         or 0,
         "result_equivalence_passed": timing.get("result_equivalence_passed"),
-        "result_equivalence_rtol": _safe_float(
-            timing.get("result_equivalence_rtol")
-        ),
-        "result_equivalence_atol": _safe_float(
-            timing.get("result_equivalence_atol")
-        ),
+        "result_equivalence_rtol": _safe_float(timing.get("result_equivalence_rtol")),
+        "result_equivalence_atol": _safe_float(timing.get("result_equivalence_atol")),
         "measured_calculation_calls": _safe_int(
             timing.get("measured_calculation_calls")
         )
@@ -1184,7 +1183,9 @@ def run_adapter_process(
             host.get("memory_phase_observation_status") or "unavailable"
         ),
         "timing_source": "adapter_payload" if timed else "not_timed",
-        "timing_scope": "adapter_internal_feature_compute" if timed else "not_applicable",
+        "timing_scope": "adapter_internal_feature_compute"
+        if timed
+        else "not_applicable",
         "memory_scope": (
             "host_process_tree_polling_with_worker_reported_event_peak_fallback"
         ),
@@ -1253,8 +1254,7 @@ def run_qc_checks(run_id: str, records: List[Dict[str, Any]]) -> Dict[str, Any]:
     evaluated = [
         record
         for record in records
-        if record.get("task_status") == STATUS_MEASURED
-        and record.get("success")
+        if record.get("task_status") == STATUS_MEASURED and record.get("success")
     ]
 
     for record in records:
@@ -1383,9 +1383,7 @@ def run_qc_checks(run_id: str, records: List[Dict[str, Any]]) -> Dict[str, Any]:
                     family=str(record.get("family") or "") or None,
                 )
             )
-        phase_status = str(
-            record.get("memory_phase_observation_status") or ""
-        ).strip()
+        phase_status = str(record.get("memory_phase_observation_status") or "").strip()
         if phase_status and phase_status != "complete":
             issues.append(
                 _issue_row(
@@ -1450,12 +1448,8 @@ def run_qc_checks(run_id: str, records: List[Dict[str, Any]]) -> Dict[str, Any]:
             )
     by_type = Counter(issue["issue_type"] for issue in issues)
     by_severity = Counter(issue["severity"] for issue in issues)
-    by_workload = Counter(
-        str(issue.get("workload") or "unknown") for issue in issues
-    )
-    by_adapter = Counter(
-        str(issue.get("adapter") or "unknown") for issue in issues
-    )
+    by_workload = Counter(str(issue.get("workload") or "unknown") for issue in issues)
+    by_adapter = Counter(str(issue.get("adapter") or "unknown") for issue in issues)
     return {
         "summary": {
             "record_count_total": len(records),
@@ -1529,12 +1523,7 @@ def save_summaries(
     if records:
         first_keys = list(records[0])
         extra_keys = sorted(
-            {
-                key
-                for record in records
-                for key in record
-                if key not in first_keys
-            }
+            {key for record in records for key in record if key not in first_keys}
         )
         fieldnames = first_keys + extra_keys
         output = io.StringIO(newline="")
@@ -1758,8 +1747,8 @@ def _stage_input_file(source: Path, destination: Path, expected_sha256: str) -> 
         return
 
     descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{destination.name}.",
-        suffix=".tmp",
+        prefix=".tmp-",
+        suffix=_nifti_suffix(destination),
         dir=str(destination.parent),
     )
     temporary = Path(temporary_name)
@@ -1940,7 +1929,9 @@ def _validate_baseline_capabilities(
         ) from exc
 
     families = families_for_workloads(workloads)
-    unsupported_families = [family for family in families if not capabilities.supports(family)]
+    unsupported_families = [
+        family for family in families if not capabilities.supports(family)
+    ]
     unsupported_workloads = [
         workload.name
         for workload in workloads
@@ -1957,9 +1948,7 @@ def _validate_baseline_capabilities(
         if unsupported_families:
             details.append("unsupported families: " + ", ".join(unsupported_families))
         if unsupported_workloads:
-            details.append(
-                "unsupported workloads: " + ", ".join(unsupported_workloads)
-            )
+            details.append("unsupported workloads: " + ", ".join(unsupported_workloads))
         if unsupported_aggregation:
             details.append(
                 f"no {REQUIRED_AGGREGATION} implementation: "
@@ -2856,13 +2845,9 @@ def _validate_measured_result(
                 rel_tol=0.0,
                 abs_tol=1e-12,
             )
-            or _safe_int(
-                timing_contract.get("post_warmup_verification_calls_minimum")
-            )
+            or _safe_int(timing_contract.get("post_warmup_verification_calls_minimum"))
             != 1
-            or timing_contract.get(
-                "single_call_calibration_accepted_above_headroom"
-            )
+            or timing_contract.get("single_call_calibration_accepted_above_headroom")
             is not True
             or not math.isclose(
                 float(timing_contract.get("target_observation_window_sec") or 0.0),
@@ -2871,25 +2856,20 @@ def _validate_measured_result(
                 abs_tol=1e-12,
             )
             or timing_contract.get("measured_window_minimum_enforced") is not True
-            or _safe_int(timing_contract.get("maximum_calls_per_observation"))
-            != 4096
+            or _safe_int(timing_contract.get("maximum_calls_per_observation")) != 4096
             or timing_contract.get("reported_samples_are_per_call") is not True
             or timing_contract.get("within_process_result_equivalence_required")
             is not True
             or timing_contract.get("fresh_process_result_equivalence_required")
             is not True
             or not math.isclose(
-                float(
-                    timing_contract.get("result_equivalence_rtol") or 0.0
-                ),
+                float(timing_contract.get("result_equivalence_rtol") or 0.0),
                 RESULT_EQUIVALENCE_RTOL,
                 rel_tol=0.0,
                 abs_tol=1e-15,
             )
             or not math.isclose(
-                float(
-                    timing_contract.get("result_equivalence_atol") or 0.0
-                ),
+                float(timing_contract.get("result_equivalence_atol") or 0.0),
                 RESULT_EQUIVALENCE_ATOL,
                 rel_tol=0.0,
                 abs_tol=1e-15,
@@ -2934,20 +2914,14 @@ def _validate_measured_result(
         calibration_duration = _safe_float(timing.get("calibration_duration_sec"))
         calibration_cpu = _safe_float(timing.get("calibration_cpu_time_sec"))
         calibration_per_call = _safe_float(timing.get("calibration_per_call_sec"))
-        calibration_headroom = _safe_float(
-            timing.get("calibration_headroom_factor")
-        )
-        calibration_stability_cv = _safe_float(
-            timing.get("calibration_stability_cv")
-        )
+        calibration_headroom = _safe_float(timing.get("calibration_headroom_factor"))
+        calibration_stability_cv = _safe_float(timing.get("calibration_stability_cv"))
         calibration_stability_span = _safe_float(
             timing.get("calibration_stability_span")
         )
         calibration_stable = timing.get("calibration_stable")
         calibration_window_samples = timing.get("calibration_window_samples_sec")
-        calibration_per_call_samples = timing.get(
-            "calibration_per_call_samples_sec"
-        )
+        calibration_per_call_samples = timing.get("calibration_per_call_samples_sec")
         calibration_calls_per_round = timing.get("calibration_calls_per_round")
         single_window_per_call = (
             _safe_float(calibration_per_call_samples[0])
@@ -3068,19 +3042,16 @@ def _validate_measured_result(
             _safe_int(value) for value in calibration_calls_per_round
         ]
         if (
-            any(
-                value is None or value <= 0
-                for value in normalized_calibration_windows
-            )
+            any(value is None or value <= 0 for value in normalized_calibration_windows)
             or any(
-                value is None or value <= 0
-                for value in normalized_calibration_per_call
+                value is None or value <= 0 for value in normalized_calibration_per_call
             )
             or any(
                 value is None or value < 1 or value > 4096
                 for value in normalized_calibration_calls
             )
-            or sum(int(value) for value in normalized_calibration_calls) != calibration_calls
+            or sum(int(value) for value in normalized_calibration_calls)
+            != calibration_calls
             or not math.isclose(
                 sum(float(value) for value in normalized_calibration_windows),
                 calibration_duration,
@@ -3144,8 +3115,7 @@ def _validate_measured_result(
                 )
             normalized = [_safe_float(value) for value in samples]
             if any(
-                value is None
-                or (float(value) <= 0 if positive else float(value) < 0)
+                value is None or (float(value) <= 0 if positive else float(value) < 0)
                 for value in normalized
             ):
                 raise AdapterProcessError(
@@ -3264,8 +3234,7 @@ def _validate_measured_result(
             or _safe_int(metrics.get("measured_observations")) != expected_measured
             or _safe_int(metrics.get("total_iterations"))
             != expected_measured + expected_warmups
-            or _safe_int(metrics.get("calls_per_observation"))
-            != calls_per_observation
+            or _safe_int(metrics.get("calls_per_observation")) != calls_per_observation
             or _safe_int(metrics.get("measured_calculation_calls"))
             != expected_measured * calls_per_observation
             or _safe_int(metrics.get("total_calculation_calls"))
@@ -3319,9 +3288,7 @@ def _validate_measured_result(
                 "controller process-tree peak RSS must be a matching positive "
                 "integer measurement"
             )
-        phase_status = str(
-            metrics.get("memory_phase_observation_status") or ""
-        ).strip()
+        phase_status = str(metrics.get("memory_phase_observation_status") or "").strip()
         if phase_status not in {"complete", "partial", "unavailable"}:
             raise AdapterProcessError(
                 "controller memory phase observation status is invalid"
@@ -3826,7 +3793,10 @@ class _SignalStop:
 
     def __enter__(self) -> "_SignalStop":
         if threading.current_thread() is threading.main_thread():
-            for signum in (signal.SIGINT, signal.SIGTERM):
+            signals = [signal.SIGINT, signal.SIGTERM]
+            if hasattr(signal, "SIGBREAK"):
+                signals.append(signal.SIGBREAK)
+            for signum in signals:
                 self._previous[int(signum)] = signal.getsignal(signum)
                 signal.signal(signum, self._handler)
         return self
@@ -4030,9 +4000,7 @@ def _print_ledger_progress(
     eta_estimate = estimate_pending_turnaround(
         rows,
         maximum_task_seconds=(
-            None
-            if task_timeout_sec is None
-            else 2.0 * float(task_timeout_sec)
+            None if task_timeout_sec is None else 2.0 * float(task_timeout_sec)
         ),
         timeout_cutoffs=ledger.timeout_cutoffs(),
     )
@@ -4469,9 +4437,7 @@ def main(argv: List[str] | None = None) -> int:
         endpoint_contract is not None
         and args.input_contract != endpoint_contract.payload["input_contract"]
     ):
-        raise ValueError(
-            "frozen endpoint contract requires manifest_harmonized inputs"
-        )
+        raise ValueError("frozen endpoint contract requires manifest_harmonized inputs")
     adapters = _parse_csv(args.adapters)
     if not adapters:
         raise ValueError("at least one adapter is required")
@@ -4951,9 +4917,9 @@ def main(argv: List[str] | None = None) -> int:
                                         termination_grace=args.termination_grace,
                                         progress_callback=report_active,
                                         progress_interval=args.progress_interval,
-                                        thread_environment=dict(
-                                            run_spec.thread_policy
-                                        )["environment"],
+                                        thread_environment=dict(run_spec.thread_policy)[
+                                            "environment"
+                                        ],
                                     )
                                 finally:
                                     _verify_staged_task_inputs(
@@ -5044,7 +5010,9 @@ def main(argv: List[str] | None = None) -> int:
                                     record["timeout_cutoff_complexity_metric"] = (
                                         timeout_complexity_metric
                                     )
-                                    record["timeout_cutoff_evidence_task_id"] = task.task_id
+                                    record["timeout_cutoff_evidence_task_id"] = (
+                                        task.task_id
+                                    )
                                 ledger.mark_terminal(
                                     task.task_id,
                                     STATUS_TIMED_OUT,
@@ -5271,9 +5239,8 @@ def main(argv: List[str] | None = None) -> int:
                 print("Benchmark stopped after a failed task; state was checkpointed.")
                 return 1
             print(f"Benchmark {run_status}. Outputs saved to: {report_dir}")
-            if (
-                run_status == "completed_with_failures"
-                and ledger.status_counts().get(STATUS_FAILED, 0)
+            if run_status == "completed_with_failures" and ledger.status_counts().get(
+                STATUS_FAILED, 0
             ):
                 print(
                     "One or more adapter tasks failed; resume the identical command "

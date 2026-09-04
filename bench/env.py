@@ -7,6 +7,7 @@ import json
 import os
 import platform
 import shutil
+import site
 import subprocess
 import sys
 import tempfile
@@ -70,6 +71,21 @@ def _profile_from_mapping(path: Path, raw: dict[str, Any]) -> RuntimeProfile:
     missing = [key for key in required if not raw.get(key)]
     if missing:
         raise EnvironmentError(f"Profile {path} is missing: {', '.join(missing)}")
+    raw_overrides = raw.get("platform_overrides", {})
+    if not isinstance(raw_overrides, Mapping):
+        raise EnvironmentError(f"Profile {path} platform_overrides must be a mapping")
+    override = raw_overrides.get(native_platform_key(), {})
+    if not isinstance(override, Mapping):
+        raise EnvironmentError(
+            f"Profile {path} override for {native_platform_key()} must be a mapping"
+        )
+    allowed_override_fields = {"python", "requirement", "metadata_version"}
+    unknown_override_fields = sorted(set(override) - allowed_override_fields)
+    if unknown_override_fields:
+        raise EnvironmentError(
+            f"Profile {path} override for {native_platform_key()} has unsupported "
+            f"fields: {', '.join(unknown_override_fields)}"
+        )
     distribution = str(raw["distribution"])
     version = str(raw["version"])
     raw_locks = raw.get("environment_locks", {})
@@ -81,7 +97,9 @@ def _profile_from_mapping(path: Path, raw: dict[str, Any]) -> RuntimeProfile:
             raise EnvironmentError(
                 f"Profile {path} lock {platform_key!r} must be a mapping"
             )
-        values = {key: str(lock.get(key) or "") for key in ("path", "sha256", "freeze_sha256")}
+        values = {
+            key: str(lock.get(key) or "") for key in ("path", "sha256", "freeze_sha256")
+        }
         missing_lock = [key for key, value in values.items() if not value]
         if missing_lock:
             raise EnvironmentError(
@@ -100,13 +118,15 @@ def _profile_from_mapping(path: Path, raw: dict[str, Any]) -> RuntimeProfile:
         name=name,
         distribution=distribution,
         version=version,
-        python=str(raw["python"]),
-        requirement=str(raw.get("requirement") or f"{distribution}=={version}"),
+        python=str(override.get("python") or raw["python"]),
+        requirement=str(
+            override.get("requirement")
+            or raw.get("requirement")
+            or f"{distribution}=={version}"
+        ),
         env_dir=str(raw.get("env_dir") or f".venvs/adapters/{name}"),
         smoke_imports=tuple(str(item) for item in raw.get("smoke_imports", ())),
-        smoke_entrypoints=tuple(
-            str(item) for item in raw.get("smoke_entrypoints", ())
-        ),
+        smoke_entrypoints=tuple(str(item) for item in raw.get("smoke_entrypoints", ())),
         extra_requirements=tuple(
             str(item) for item in raw.get("extra_requirements", ())
         ),
@@ -114,7 +134,9 @@ def _profile_from_mapping(path: Path, raw: dict[str, Any]) -> RuntimeProfile:
         upstream=str(raw.get("upstream") or ""),
         verified_latest_stable=str(raw.get("verified_latest_stable") or ""),
         source_commit=str(raw.get("source_commit") or ""),
-        metadata_version=str(raw.get("metadata_version") or ""),
+        metadata_version=str(
+            override.get("metadata_version") or raw.get("metadata_version") or ""
+        ),
         notes=str(raw.get("notes") or ""),
         environment_locks=tuple(locks),
     )
@@ -216,6 +238,23 @@ def _find_python(requested: str) -> Path:
     )
 
 
+def _find_uv() -> str | None:
+    """Find uv even when a Windows user-script directory is not on PATH."""
+
+    executable = shutil.which("uv")
+    if executable:
+        return executable
+    if os.name != "nt":
+        return None
+    version_directory = f"Python{sys.version_info.major}{sys.version_info.minor}"
+    candidate = Path(site.getuserbase()) / version_directory / "Scripts" / "uv.exe"
+    if candidate.is_file():
+        return str(candidate.resolve())
+    # Python's user base already includes the version on conventional installs.
+    candidate = Path(site.getuserbase()) / "Scripts" / "uv.exe"
+    return str(candidate.resolve()) if candidate.is_file() else None
+
+
 def _profile_fingerprint(profile: RuntimeProfile) -> str:
     encoded = json.dumps(asdict(profile), sort_keys=True, separators=(",", ":")).encode(
         "utf-8"
@@ -241,7 +280,9 @@ def _resolve_environment_lock(
     profile: RuntimeProfile,
 ) -> tuple[EnvironmentLock, Path, list[str]] | None:
     matches = [
-        lock for lock in profile.environment_locks if lock.platform_key == native_platform_key()
+        lock
+        for lock in profile.environment_locks
+        if lock.platform_key == native_platform_key()
     ]
     if not matches:
         return None
@@ -259,7 +300,9 @@ def _resolve_environment_lock(
             f"Environment lock must remain inside the repository: {path}"
         ) from exc
     if not path.is_file():
-        raise EnvironmentError(f"Environment lock is missing for {profile.name}: {path}")
+        raise EnvironmentError(
+            f"Environment lock is missing for {profile.name}: {path}"
+        )
     if _file_sha256(path) != lock.sha256:
         raise EnvironmentError(f"Environment lock byte checksum failed: {path}")
     requirements = sorted(
@@ -278,10 +321,10 @@ def _resolve_environment_lock(
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+        prefix=".tmp-", suffix=path.suffix, dir=path.parent
     )
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(payload, handle, indent=2, sort_keys=True)
             handle.write("\n")
             handle.flush()
@@ -298,11 +341,21 @@ def _run(command: list[str]) -> subprocess.CompletedProcess[str]:
 
 def _create_venv(profile: RuntimeProfile, target: Path) -> None:
     interpreter = _find_python(profile.python)
-    uv = shutil.which("uv")
+    uv = _find_uv()
     if uv:
         # Verification intentionally uses `python -m pip check/freeze`; seed the
         # uv environment so those commands exist in every supported runtime.
-        _run([uv, "venv", "--seed", "--python", str(interpreter), str(target)])
+        _run(
+            [
+                uv,
+                "venv",
+                "--no-project",
+                "--seed",
+                "--python",
+                str(interpreter),
+                str(target),
+            ]
+        )
     else:
         _run([str(interpreter), "-m", "venv", str(target)])
 
@@ -311,11 +364,13 @@ def _install(profile: RuntimeProfile, target: Path) -> None:
     python = env_python(target)
     resolved_lock = _resolve_environment_lock(profile)
     requirements = [profile.requirement, *profile.extra_requirements]
-    uv = shutil.which("uv")
+    uv = _find_uv()
     if uv:
         command = [uv, "pip", "install", "--python", str(python), *profile.pip_args]
         if resolved_lock is not None:
             command.extend(["--requirement", str(resolved_lock[1])])
+            if "#sha256=" in profile.requirement.casefold():
+                command.append(profile.requirement)
         else:
             command.extend(requirements)
         _run(command)
@@ -335,6 +390,8 @@ def _install(profile: RuntimeProfile, target: Path) -> None:
         command = [str(python), "-m", "pip", "install", *profile.pip_args]
         if resolved_lock is not None:
             command.extend(["--requirement", str(resolved_lock[1])])
+            if "#sha256=" in profile.requirement.casefold():
+                command.append(profile.requirement)
         else:
             command.extend(requirements)
         _run(command)

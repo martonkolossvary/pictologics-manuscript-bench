@@ -14,9 +14,18 @@ upstream: "https://pypi.org/project/pyradiomics/3.1.0/"
 verified_latest_stable: "2026-07-21"
 source_commit: "6a761c4"
 metadata_version: "3.0.1a1"
-notes: "Official 3.1.0 tag commit; avoids the unusable PyPI sdist and any third-party Python 3.12 fork. The upstream tag still reports stale distribution metadata 3.0.1a1, which is verified separately and never rewritten."
+notes: "Official 3.1.0 tag commit; avoids the unusable PyPI sdist and any third-party Python 3.12 fork. Source builds report stale distribution metadata 3.0.1a1, which is verified separately and never rewritten. Windows uses upstream's SHA-256-pinned CPython 3.9 wheel for the same release because no newer Windows wheel is published."
+platform_overrides:
+  Windows-AMD64:
+    python: "3.9"
+    requirement: "pyradiomics @ https://files.pythonhosted.org/packages/0c/42/9bcefd036d0170295df6a545433548917c71687e029bae9d87e8a720432d/pyradiomics-3.1.0-cp39-cp39-win_amd64.whl#sha256=1411f19206a844404110e31c9a211b0e10ae6e32b04153747c7c139fa466fcec"
+    metadata_version: "3.1.0"
 environment_locks:
   Darwin-arm64:
     path: "reproducibility/environment-locks/darwin-arm64/pyradiomics.txt"
     sha256: "5096585f2754890500e6f2cada5ba456bf438105ea5f42265f416b583ebbbf0c"
     freeze_sha256: "9afb66a4ae63bea2bcc74a0f4a7274563134a8481b3a5d3182e1fcfb8998085e"
+  Windows-AMD64:
+    path: "reproducibility/environment-locks/windows-amd64/pyradiomics.txt"
+    sha256: "bfaafed31972117e50185a82011de7cc0e66f7d860c2e825441c2dd38667a832"
+    freeze_sha256: "008fc41f1b160ae7ea3af1e32afdb85bd4baad5185a19d841e090976fccdd5ec"

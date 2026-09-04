@@ -55,8 +55,30 @@ class EnvironmentProfileTests(unittest.TestCase):
             profiles["medimage"].smoke_entrypoints,
             ("bench.adapters.medimage_adapter:_medimage_modules",),
         )
-        self.assertIn("6a761c4", profiles["pyradiomics"].requirement)
+        if env.native_platform_key() == "Windows-AMD64":
+            self.assertEqual(profiles["pyradiomics"].python, "3.9")
+            self.assertIn(
+                "pyradiomics-3.1.0-cp39-cp39-win_amd64.whl",
+                profiles["pyradiomics"].requirement,
+            )
+            self.assertIn("sha256=1411f192", profiles["pyradiomics"].requirement)
+            self.assertEqual(profiles["pyradiomics"].metadata_version, "3.1.0")
+        else:
+            self.assertIn("6a761c4", profiles["pyradiomics"].requirement)
         self.assertEqual(profiles["pyradiomics"].source_commit, "6a761c4")
+
+    def test_pyradiomics_platform_override_leaves_other_platforms_unchanged(
+        self,
+    ) -> None:
+        with patch("bench.env.native_platform_key", return_value="Darwin-arm64"):
+            profile = env.load_runtime_profiles()["pyradiomics"]
+
+        self.assertEqual(profile.python, "3.11")
+        self.assertIn(
+            "git+https://github.com/AIM-Harvard/pyradiomics.git@6a761c4",
+            profile.requirement,
+        )
+        self.assertEqual(profile.metadata_version, "3.0.1a1")
 
     def test_smoke_entrypoint_imports_and_calls_declared_probe(self) -> None:
         profile = env.RuntimeProfile(
@@ -108,6 +130,68 @@ class EnvironmentProfileTests(unittest.TestCase):
                 hashlib.sha256("\n".join(requirements).encode()).hexdigest(),
                 lock.freeze_sha256,
             )
+
+    @unittest.skipUnless(
+        env.native_platform_key() == "Windows-AMD64", "Windows lock test"
+    )
+    def test_native_windows_locks_bind_the_complete_observed_freezes(self) -> None:
+        expected_counts = {
+            "medimage": 236,
+            "mirp": 30,
+            "pictologics": 28,
+            "pyradiomics": 13,
+            "zrad": 22,
+        }
+        for name, profile in env.load_runtime_profiles().items():
+            with self.subTest(profile=name):
+                lock = next(
+                    item
+                    for item in profile.environment_locks
+                    if item.platform_key == "Windows-AMD64"
+                )
+                path = env.repo_root() / lock.path
+                requirements = sorted(
+                    line.strip()
+                    for line in path.read_text(encoding="utf-8").splitlines()
+                    if line.strip() and not line.lstrip().startswith("#")
+                )
+                self.assertEqual(path.name, f"{name}.txt")
+                self.assertEqual(len(requirements), expected_counts[name])
+                self.assertEqual(
+                    hashlib.sha256(path.read_bytes()).hexdigest(), lock.sha256
+                )
+                self.assertEqual(
+                    hashlib.sha256("\n".join(requirements).encode()).hexdigest(),
+                    lock.freeze_sha256,
+                )
+
+    def test_hashed_primary_artifact_is_enforced_when_installing_lock(self) -> None:
+        requirement = "adapter @ https://example.invalid/adapter.whl#sha256=abc"
+        profile = env.RuntimeProfile(
+            name="adapter",
+            distribution="adapter",
+            version="1",
+            python="3.12",
+            requirement=requirement,
+            env_dir=".venvs/adapters/adapter",
+            smoke_imports=(),
+        )
+        lock = env.EnvironmentLock("Windows-AMD64", "lock.txt", "a", "b")
+        lock_path = env.repo_root() / "lock.txt"
+
+        with (
+            patch("bench.env._find_uv", return_value="uv"),
+            patch(
+                "bench.env._resolve_environment_lock",
+                return_value=(lock, lock_path, ["adapter==1"]),
+            ),
+            patch("bench.env._run") as run,
+        ):
+            env._install(profile, env.repo_root() / ".venvs/adapters/adapter")
+
+        command = run.call_args.args[0]
+        self.assertIn(requirement, command)
+        self.assertEqual(command[-3:-1], ["--requirement", str(lock_path)])
 
     def test_recorded_environment_rejects_transitive_package_drift(self) -> None:
         freeze = ["adapter==1.0", "dependency==2.0"]

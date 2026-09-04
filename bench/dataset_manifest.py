@@ -46,7 +46,7 @@ def atomic_write_bytes(path: Path, data: bytes) -> None:
 
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+        prefix=".tmp-", suffix=path.suffix, dir=str(path.parent)
     )
     temporary = Path(temporary_name)
     try:
@@ -81,7 +81,7 @@ def atomic_write_csv(path: Path, rows: Iterable[Mapping[str, Any]]) -> None:
     fieldnames = list(row_list[0])
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+        prefix=".tmp-", suffix=path.suffix, dir=str(path.parent)
     )
     temporary = Path(temporary_name)
     try:
@@ -119,7 +119,7 @@ def atomic_copy(source: Path, destination: Path, *, overwrite: bool) -> None:
         return
 
     descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{destination.name}.", suffix=".tmp", dir=str(destination.parent)
+        prefix=".tmp-", suffix=destination.suffix, dir=str(destination.parent)
     )
     os.close(descriptor)
     temporary = Path(temporary_name)
@@ -155,7 +155,7 @@ def atomic_write_nifti(path: Path, data: Any, affine: Any) -> None:
     image.set_qform(transform, code=1)
     image.set_sform(transform, code=1)
     descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".nii.gz", dir=str(path.parent)
+        prefix=".nifti-", suffix=".nii.gz", dir=str(path.parent)
     )
     os.close(descriptor)
     temporary = Path(temporary_name)
@@ -403,7 +403,10 @@ def _validate_provenance(
     provenance = _require_mapping(raw_provenance, "manifest provenance")
 
     if dataset_kind == "synthetic":
-        if "preparation_record" in provenance or "preparation_record_sha256" in provenance:
+        if (
+            "preparation_record" in provenance
+            or "preparation_record_sha256" in provenance
+        ):
             raise DatasetValidationError(
                 "preparation_record is only valid for real-world datasets"
             )
@@ -456,7 +459,10 @@ def _validate_provenance(
                 )
 
     else:
-        if "generation_record" in provenance or "generation_record_sha256" in provenance:
+        if (
+            "generation_record" in provenance
+            or "generation_record_sha256" in provenance
+        ):
             raise DatasetValidationError(
                 "generation_record is only valid for synthetic datasets"
             )

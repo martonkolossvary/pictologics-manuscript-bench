@@ -66,19 +66,29 @@ Use a local NTFS path and a stable, non-identifying machine ID:
 ```powershell
 ./scripts/setup.ps1
 ./scripts/qualify_benchmark_host.ps1 `
-  -ResultRoot D:\pictobench-results `
-  -MachineId windows-workstation-01 `
-  -MachineLabel "Windows workstation"
+  -ResultRoot C:\pictobench-results-SOURCE_COMMIT `
+  -HostProfile configs/benchmark/hosts/windows-9800x3d-01.json
 ./scripts/run_benchmark.ps1 `
   --workspace-root data/benchmark `
-  --result-root D:\pictobench-results `
-  --machine-id windows-workstation-01 `
-  --machine-label "Windows workstation" `
+  --result-root C:\pictobench-results-SOURCE_COMMIT `
+  --host-profile configs/benchmark/hosts/windows-9800x3d-01.json `
   --execute --confirm CALCULATE
 ```
 
 Keep repository, workspace, staged inputs, and results within the launcher's
-path-length budget.
+path-length budget. The checked-in profile is valid only for its exact AMD
+Ryzen 7 9800X3D host; create a separate public-safe profile for any other
+Windows machine.
+
+Windows setup requires Python 3.9, 3.10, and 3.12 plus `uv` 0.8. PyRadiomics
+uses its official SHA-256-pinned CPython 3.9 Windows wheel because the upstream
+3.1.0 release provides no newer Windows wheels and its source build requires a
+native compiler. The launcher holds a `SetThreadExecutionState` system-sleep
+assertion during execution and
+releases it on exit. Session and task-boundary provenance includes AC/battery
+state, battery saver, the active power-scheme GUID, the localized display name,
+and a GUID-derived portable tag. The GUID keeps results comparable across
+Windows display languages; the display name is retained only as diagnostics.
 
 ## Resume and machine separation
 

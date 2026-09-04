@@ -53,7 +53,9 @@ def _inside(root: Path, relative: str) -> Path:
     try:
         target.relative_to(root.resolve())
     except ValueError as exc:
-        raise BootstrapError(f"manifest destination escapes output root: {relative}") from exc
+        raise BootstrapError(
+            f"manifest destination escapes output root: {relative}"
+        ) from exc
     return target
 
 
@@ -104,8 +106,23 @@ def _ensure_repository(
     target = cache / name
     if not target.exists():
         cache.mkdir(parents=True, exist_ok=True)
-        _run(["git", "clone", "--no-checkout", str(specification["url"]), str(target)])
-        _run(["git", "-C", str(target), "checkout", "--detach", commit])
+        _run(
+            [
+                "git",
+                "-c",
+                "core.autocrlf=false",
+                "clone",
+                "--no-checkout",
+                str(specification["url"]),
+                str(target),
+            ]
+        )
+    # Manifest checksums bind Git blob bytes.  A user's global
+    # core.autocrlf=true setting would otherwise rewrite text inputs while
+    # checking out the pinned repository on Windows.
+    _run(["git", "-C", str(target), "config", "core.autocrlf", "false"])
+    _run(["git", "-C", str(target), "config", "core.eol", "lf"])
+    _run(["git", "-C", str(target), "checkout", "--detach", "--force", commit])
     return _verify_repository(target, commit)
 
 
@@ -123,7 +140,7 @@ def _atomic_copy(source: Path, destination: Path, expected: str, *, force: bool)
             )
     destination.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(
-        prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent
+        prefix=".tmp-", suffix=destination.suffix, dir=destination.parent
     )
     os.close(descriptor)
     try:
@@ -149,14 +166,15 @@ def _download(url: str, destination: Path, expected: str, *, force: bool) -> str
             )
     destination.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(
-        prefix=f".{destination.name}.", suffix=".download", dir=destination.parent
+        prefix=".download-", suffix=destination.suffix, dir=destination.parent
     )
     os.close(descriptor)
     try:
         try:
-            with urllib.request.urlopen(url, timeout=60) as response, open(
-                temporary, "wb"
-            ) as stream:
+            with (
+                urllib.request.urlopen(url, timeout=60) as response,
+                open(temporary, "wb") as stream,
+            ):
                 shutil.copyfileobj(response, stream)
         except Exception as urllib_error:
             # Some python.org macOS interpreters do not inherit the system CA
@@ -196,10 +214,10 @@ def _download(url: str, destination: Path, expected: str, *, force: bool) -> str
 def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+        prefix=".tmp-", suffix=path.suffix, dir=path.parent
     )
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
             json.dump(value, stream, indent=2, sort_keys=True)
             stream.write("\n")
             stream.flush()
@@ -228,9 +246,7 @@ def _entries_for(
     manifest: Mapping[str, Any], components: set[str]
 ) -> list[Mapping[str, Any]]:
     return [
-        entry
-        for entry in manifest["files"]
-        if str(entry["component"]) in components
+        entry for entry in manifest["files"] if str(entry["component"]) in components
     ]
 
 
@@ -256,9 +272,9 @@ def _write_generated_manifests(
         _require_destinations(root, rows)
         files = [
             {
-                "path": Path(str(row["destination"])).relative_to(
-                    "data/ibsi1/digital_phantom"
-                ).as_posix(),
+                "path": Path(str(row["destination"]))
+                .relative_to("data/ibsi1/digital_phantom")
+                .as_posix(),
                 "sha256": row["sha256"],
                 "bytes": row["bytes"],
             }
@@ -294,9 +310,13 @@ def _write_generated_manifests(
             if entry["component"] == "ibsi2-phase2"
             and str(entry["destination"]).startswith("data/ibsi2/source/")
         ]
-        if phase1 and phase2 and all(
-            _inside(root, str(entry["destination"])).is_file()
-            for entry in [*phase1, *phase2]
+        if (
+            phase1
+            and phase2
+            and all(
+                _inside(root, str(entry["destination"])).is_file()
+                for entry in [*phase1, *phase2]
+            )
         ):
             _require_destinations(root, [*phase1, *phase2])
             images: dict[str, str] = {}
@@ -339,15 +359,13 @@ def _write_generated_manifests(
             )
 
     if "ibsi2-phase3" in components:
-        rows = [
-            entry for entry in all_entries if entry["component"] == "ibsi2-phase3"
-        ]
+        rows = [entry for entry in all_entries if entry["component"] == "ibsi2-phase3"]
         _require_destinations(root, rows)
         files = [
             {
-                "path": Path(str(row["destination"])).relative_to(
-                    "data/ibsi2_validation"
-                ).as_posix(),
+                "path": Path(str(row["destination"]))
+                .relative_to("data/ibsi2_validation")
+                .as_posix(),
                 "sha256": row["sha256"],
                 "bytes": row["bytes"],
             }

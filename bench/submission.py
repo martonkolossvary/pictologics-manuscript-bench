@@ -11,7 +11,12 @@ import shutil
 import subprocess
 from typing import Any
 
-from bench.benchmark_ledger import atomic_write_json, sha256_file
+from bench.benchmark_ledger import (
+    atomic_write_json,
+    native_path,
+    read_text,
+    sha256_file,
+)
 from bench.benchmark_models import fingerprint, run_spec_identity
 from bench.power_provenance import combine_power_summaries
 
@@ -99,10 +104,48 @@ def _contained(root: Path, relative: str) -> Path:
     return candidate
 
 
+def _is_file(path: Path) -> bool:
+    return os.path.isfile(native_path(path))
+
+
+def _is_symlink(path: Path) -> bool:
+    return os.path.islink(native_path(path))
+
+
+def _file_size(path: Path) -> int:
+    return os.stat(native_path(path)).st_size
+
+
+def _relative_file_inventory(root: Path) -> set[str]:
+    native_root = native_path(root)
+    inventory: set[str] = set()
+    for directory, _, filenames in os.walk(native_root):
+        for filename in filenames:
+            absolute = os.path.join(directory, filename)
+            inventory.add(os.path.relpath(absolute, native_root).replace("\\", "/"))
+    return inventory
+
+
+def _child_directories(path: Path) -> list[Path]:
+    with os.scandir(native_path(path)) as entries:
+        return sorted(
+            (
+                Path(entry.path)
+                for entry in entries
+                if entry.is_dir(follow_symlinks=False)
+            ),
+            key=lambda item: item.name,
+        )
+
+
+def _relative_display(path: Path, root: Path) -> str:
+    return os.path.relpath(native_path(path), native_path(root)).replace("\\", "/")
+
+
 def validate_report_manifest(report_dir: Path) -> dict[str, Any]:
     manifest_path = report_dir / "report_manifest.json"
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest = json.loads(read_text(manifest_path))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise SubmissionError(f"invalid report manifest: {manifest_path}") from exc
     if not isinstance(manifest, dict) or manifest.get("schema_version") != 1:
@@ -118,13 +161,16 @@ def validate_report_manifest(report_dir: Path) -> dict[str, Any]:
         if not isinstance(raw_entry, dict):
             raise SubmissionError(f"invalid artifact entry in {manifest_path}")
         relative = str(raw_entry.get("path") or "")
-        if relative in seen or Path(relative).suffix.casefold() not in PUBLICATION_SUFFIXES:
+        if (
+            relative in seen
+            or Path(relative).suffix.casefold() not in PUBLICATION_SUFFIXES
+        ):
             raise SubmissionError(f"invalid or duplicate report artifact: {relative!r}")
         seen.add(relative)
         artifact = _contained(report_dir, relative)
-        if not artifact.is_file() or artifact.is_symlink():
+        if not _is_file(artifact) or _is_symlink(artifact):
             raise SubmissionError(f"report artifact is missing or linked: {relative}")
-        if raw_entry.get("bytes") != artifact.stat().st_size:
+        if raw_entry.get("bytes") != _file_size(artifact):
             raise SubmissionError(f"report artifact size mismatch: {relative}")
         if raw_entry.get("sha256") != sha256_file(artifact):
             raise SubmissionError(f"report artifact checksum mismatch: {relative}")
@@ -142,7 +188,9 @@ def _git_source_commit(repository: Path) -> str:
         text=True,
     )
     if status.stdout.strip():
-        raise SubmissionError("source repository must be clean before packaging results")
+        raise SubmissionError(
+            "source repository must be clean before packaging results"
+        )
     commit = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=repository,
@@ -162,8 +210,8 @@ def _load_run_identity(
     source_commit: str,
 ) -> tuple[dict[str, Any], dict[str, Any], str]:
     try:
-        run_spec = json.loads((run_dir / "run_spec.json").read_text(encoding="utf-8"))
-        run_meta = json.loads((run_dir / "run_meta.json").read_text(encoding="utf-8"))
+        run_spec = json.loads(read_text(run_dir / "run_spec.json"))
+        run_meta = json.loads(read_text(run_dir / "run_meta.json"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise SubmissionError(f"invalid run metadata: {run_dir}") from exc
     if not isinstance(run_spec, dict) or not isinstance(run_meta, dict):
@@ -172,7 +220,9 @@ def _load_run_identity(
     if run_meta.get("run_fingerprint") != run_fingerprint:
         raise SubmissionError(f"run fingerprint mismatch: {run_dir}")
     if run_meta.get("git_commit") != source_commit:
-        raise SubmissionError(f"run was not executed from source commit {source_commit}")
+        raise SubmissionError(
+            f"run was not executed from source commit {source_commit}"
+        )
     machine = run_spec.get("benchmark_machine")
     if not isinstance(machine, dict) or machine.get("machine_id") != machine_id:
         raise SubmissionError(f"run machine identity mismatch: {run_dir}")
@@ -236,7 +286,12 @@ def package_submission(
     destination = output_root / architecture / submission_id
     if destination.exists():
         raise SubmissionError(f"submission already exists: {destination}")
-    temporary = destination.with_name(f".{submission_id}.tmp-{os.getpid()}")
+    # Do not repeat the potentially long publication ID in the staging name.
+    # The final destination is path-budgeted by the launcher, but an expanded
+    # temporary name can exceed legacy MAX_PATH on otherwise valid Windows hosts.
+    temporary = destination.with_name(
+        f".tmp-{os.getpid()}-{hashlib.sha256(submission_id.encode()).hexdigest()[:8]}"
+    )
     if temporary.exists():
         raise SubmissionError(f"temporary submission path already exists: {temporary}")
 
@@ -265,7 +320,7 @@ def package_submission(
                 files.append(
                     {
                         "path": bundle_relative,
-                        "bytes": target.stat().st_size,
+                        "bytes": _file_size(target),
                         "sha256": sha256_file(target),
                     }
                 )
@@ -295,7 +350,7 @@ def package_submission(
         }
         atomic_write_json(temporary / "submission_manifest.json", submission_manifest)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        temporary.rename(destination)
+        os.replace(native_path(temporary), native_path(destination))
     except BaseException:
         shutil.rmtree(temporary, ignore_errors=True)
         raise
@@ -306,9 +361,7 @@ def package_submission(
 def validate_submission_bundle(bundle: Path) -> dict[str, Any]:
     bundle = bundle.resolve()
     try:
-        manifest = json.loads(
-            (bundle / "submission_manifest.json").read_text(encoding="utf-8")
-        )
+        manifest = json.loads(read_text(bundle / "submission_manifest.json"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise SubmissionError(f"invalid submission manifest: {bundle}") from exc
     if not isinstance(manifest, dict) or manifest.get("schema_version") != 1:
@@ -321,7 +374,9 @@ def validate_submission_bundle(bundle: Path) -> dict[str, Any]:
         raise SubmissionError(f"invalid architecture directory: {bundle.parent.name}")
     pillars = manifest.get("pillars")
     if not isinstance(pillars, dict) or set(pillars) != set(PILLARS):
-        raise SubmissionError(f"submission must contain all benchmark pillars: {bundle}")
+        raise SubmissionError(
+            f"submission must contain all benchmark pillars: {bundle}"
+        )
     files = manifest.get("files")
     if not isinstance(files, list) or manifest.get("file_count") != len(files):
         raise SubmissionError(f"submission file inventory is invalid: {bundle}")
@@ -331,22 +386,21 @@ def validate_submission_bundle(bundle: Path) -> dict[str, Any]:
         if not isinstance(raw_entry, dict):
             raise SubmissionError(f"invalid submission file entry: {bundle}")
         relative = str(raw_entry.get("path") or "")
-        if relative in seen or Path(relative).suffix.casefold() not in PUBLICATION_SUFFIXES:
+        if (
+            relative in seen
+            or Path(relative).suffix.casefold() not in PUBLICATION_SUFFIXES
+        ):
             raise SubmissionError(f"invalid or duplicate submission file: {relative!r}")
         seen.add(relative)
         path = _contained(bundle, relative)
-        if not path.is_file() or path.is_symlink():
+        if not _is_file(path) or _is_symlink(path):
             raise SubmissionError(f"submission file is missing or linked: {relative}")
-        if raw_entry.get("bytes") != path.stat().st_size:
+        if raw_entry.get("bytes") != _file_size(path):
             raise SubmissionError(f"submission file size mismatch: {relative}")
         if raw_entry.get("sha256") != sha256_file(path):
             raise SubmissionError(f"submission file checksum mismatch: {relative}")
 
-    actual = {
-        path.relative_to(bundle).as_posix()
-        for path in bundle.rglob("*")
-        if path.is_file()
-    }
+    actual = _relative_file_inventory(bundle)
     expected = seen | {"submission_manifest.json"}
     if actual != expected:
         raise SubmissionError(
@@ -367,24 +421,40 @@ def validate_submission_tree(root: Path) -> list[str]:
     if not root.exists():
         return [f"submission root is missing: {root}"]
     failures: list[str] = []
-    manifests = sorted(root.glob("*/*/submission_manifest.json"))
+    architectures = _child_directories(root)
+    bundles = [
+        bundle
+        for architecture in architectures
+        for bundle in _child_directories(architecture)
+    ]
+    manifests = [
+        bundle / "submission_manifest.json"
+        for bundle in bundles
+        if _is_file(bundle / "submission_manifest.json")
+    ]
     for manifest in manifests:
         try:
             validate_submission_bundle(manifest.parent)
         except SubmissionError as exc:
             failures.append(str(exc))
-    unexpected = [
-        path.relative_to(root).as_posix()
-        for path in root.iterdir()
-        if path.name != "README.md" and (not path.is_dir() or not SLUG_PATTERN.fullmatch(path.name))
-    ]
+    with os.scandir(native_path(root)) as entries:
+        unexpected = [
+            entry.name
+            for entry in entries
+            if entry.name != "README.md"
+            and (
+                not entry.is_dir(follow_symlinks=False)
+                or not SLUG_PATTERN.fullmatch(entry.name)
+            )
+        ]
     failures.extend(f"invalid item in submission root: {path}" for path in unexpected)
-    manifested_bundles = {manifest.parent.resolve() for manifest in manifests}
-    for architecture in sorted(path for path in root.iterdir() if path.is_dir()):
-        for bundle in sorted(architecture.iterdir()):
-            if not bundle.is_dir() or bundle.resolve() not in manifested_bundles:
-                failures.append(
-                    "submission directory has no manifest: "
-                    f"{bundle.relative_to(root).as_posix()}"
-                )
+    manifested_bundles = {
+        os.path.normcase(native_path(manifest.parent)) for manifest in manifests
+    }
+    for bundle in bundles:
+        if os.path.normcase(native_path(bundle)) not in manifested_bundles:
+            failures.append(
+                "submission directory has no manifest: "
+                f"{_relative_display(bundle, root)}"
+            )
     return failures

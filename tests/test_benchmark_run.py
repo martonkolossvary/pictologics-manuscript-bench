@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
@@ -278,13 +279,13 @@ class BenchmarkRunnerTests(unittest.TestCase):
         }
         inventories = {}
         for adapter in (
-                "pictologics",
-                "pyradiomics",
-                "mirp",
-                "medimage",
-                "zrad",
-                "slow",
-                "fake",
+            "pictologics",
+            "pyradiomics",
+            "mirp",
+            "medimage",
+            "zrad",
+            "slow",
+            "fake",
         ):
             try:
                 capabilities = get_adapter(adapter)
@@ -444,8 +445,7 @@ class BenchmarkRunnerTests(unittest.TestCase):
         )
         self.assertEqual(
             run._declared_unsupported_reason(spatial_task),
-            "pyradiomics does not declare support for workload "
-            "spatial_autocorrelation",
+            "pyradiomics does not declare support for workload spatial_autocorrelation",
         )
 
     def make_dataset(
@@ -612,24 +612,26 @@ class BenchmarkRunnerTests(unittest.TestCase):
     def test_task_plan_rotates_adapter_order_across_exact_comparison_blocks(
         self,
     ) -> None:
-        case = harmonized_case({
-            "case_id": "case",
-            "modality": "ct",
-            "size": 10,
-            "variant": 1,
-            "mask_id": "M1",
-            "mask_label": "roi",
-            "image_abs": "/tmp/image.nii.gz",
-            "mask_abs": "/tmp/mask.nii.gz",
-            "image_sha256": "a" * 64,
-            "mask_sha256": "b" * 64,
-            "shape": [10, 10, 10],
-            "spacing": [1.0, 1.0, 1.0],
-            "image_voxels": 1000,
-            "mask_voxels": 500,
-            "mask_fraction": 0.5,
-            "complexity": 1000,
-        })
+        case = harmonized_case(
+            {
+                "case_id": "case",
+                "modality": "ct",
+                "size": 10,
+                "variant": 1,
+                "mask_id": "M1",
+                "mask_label": "roi",
+                "image_abs": "/tmp/image.nii.gz",
+                "mask_abs": "/tmp/mask.nii.gz",
+                "image_sha256": "a" * 64,
+                "mask_sha256": "b" * 64,
+                "shape": [10, 10, 10],
+                "spacing": [1.0, 1.0, 1.0],
+                "image_voxels": 1000,
+                "mask_voxels": 500,
+                "mask_fraction": 0.5,
+                "complexity": 1000,
+            }
+        )
         tasks = run.build_task_plan(
             cases=[case],
             dataset="unit",
@@ -655,24 +657,26 @@ class BenchmarkRunnerTests(unittest.TestCase):
         self.assertEqual([task.ordinal for task in tasks], list(range(1, 9)))
 
     def test_rotation_balances_every_adapter_across_execution_positions(self) -> None:
-        case = harmonized_case({
-            "case_id": "case",
-            "modality": "ct",
-            "size": 2,
-            "variant": 1,
-            "mask_id": "M1",
-            "mask_label": "roi",
-            "image_abs": "/tmp/image.nii.gz",
-            "mask_abs": "/tmp/mask.nii.gz",
-            "image_sha256": "a" * 64,
-            "mask_sha256": "b" * 64,
-            "shape": [2, 2, 2],
-            "spacing": [1.0, 1.0, 1.0],
-            "image_voxels": 8,
-            "mask_voxels": 4,
-            "mask_fraction": 0.5,
-            "complexity": 8,
-        })
+        case = harmonized_case(
+            {
+                "case_id": "case",
+                "modality": "ct",
+                "size": 2,
+                "variant": 1,
+                "mask_id": "M1",
+                "mask_label": "roi",
+                "image_abs": "/tmp/image.nii.gz",
+                "mask_abs": "/tmp/mask.nii.gz",
+                "image_sha256": "a" * 64,
+                "mask_sha256": "b" * 64,
+                "shape": [2, 2, 2],
+                "spacing": [1.0, 1.0, 1.0],
+                "image_voxels": 8,
+                "mask_voxels": 4,
+                "mask_fraction": 0.5,
+                "complexity": 8,
+            }
+        )
         adapters = ["pictologics", "mirp", "medimage", "pyradiomics", "zrad"]
         tasks = run.build_task_plan(
             cases=[case],
@@ -883,12 +887,8 @@ class BenchmarkRunnerTests(unittest.TestCase):
         qc = run.run_qc_checks("test-run", records)
 
         self.assertEqual(qc["summary"]["issue_count_total"], 2)
-        self.assertEqual(
-            qc["summary"]["issue_counts_by_workload"], {"texture": 2}
-        )
-        self.assertEqual(
-            qc["summary"]["issue_counts_by_adapter"], {"pictologics": 2}
-        )
+        self.assertEqual(qc["summary"]["issue_counts_by_workload"], {"texture": 2})
+        self.assertEqual(qc["summary"]["issue_counts_by_adapter"], {"pictologics": 2})
         self.assertEqual(
             {issue["issue_type"] for issue in qc["issues"]},
             {"timeout_cutoff_skip", "calculation_interrupted"},
@@ -937,7 +937,11 @@ class BenchmarkRunnerTests(unittest.TestCase):
         self.assertEqual(counts[STATUS_FAILED], 1)
         self.assertIn(
             "fresh-process repeat changed numerical feature values",
-            next(record["error"] for record in records if record["task_status"] == STATUS_FAILED),
+            next(
+                record["error"]
+                for record in records
+                if record["task_status"] == STATUS_FAILED
+            ),
         )
 
     def test_hash_verification_can_only_be_disabled_for_dry_run(self) -> None:
@@ -964,24 +968,26 @@ class BenchmarkRunnerTests(unittest.TestCase):
     def test_payload_contract_validates_aggregation_timing_and_values(self) -> None:
         task = run.build_task_plan(
             cases=[
-                harmonized_case({
-                    "case_id": "case",
-                    "modality": "ct",
-                    "size": 10,
-                    "variant": 1,
-                    "mask_id": "M1",
-                    "mask_label": "roi",
-                    "image_abs": "/tmp/image.nii.gz",
-                    "mask_abs": "/tmp/mask.nii.gz",
-                    "image_sha256": "a" * 64,
-                    "mask_sha256": "b" * 64,
-                    "shape": [10, 10, 10],
-                    "spacing": [1.0, 1.0, 1.0],
-                    "image_voxels": 1000,
-                    "mask_voxels": 500,
-                    "mask_fraction": 0.5,
-                    "complexity": 1000,
-                })
+                harmonized_case(
+                    {
+                        "case_id": "case",
+                        "modality": "ct",
+                        "size": 10,
+                        "variant": 1,
+                        "mask_id": "M1",
+                        "mask_label": "roi",
+                        "image_abs": "/tmp/image.nii.gz",
+                        "mask_abs": "/tmp/mask.nii.gz",
+                        "image_sha256": "a" * 64,
+                        "mask_sha256": "b" * 64,
+                        "shape": [10, 10, 10],
+                        "spacing": [1.0, 1.0, 1.0],
+                        "image_voxels": 1000,
+                        "mask_voxels": 500,
+                        "mask_fraction": 0.5,
+                        "complexity": 1000,
+                    }
+                )
             ],
             dataset="unit",
             adapters=["pictologics"],
@@ -1060,9 +1066,7 @@ class BenchmarkRunnerTests(unittest.TestCase):
             "jit_warmup_performed": True,
             "outside_measured_region": True,
         }
-        payload["values"] = {
-            "all": {name: 1.0 for name in payload["features"]["all"]}
-        }
+        payload["values"] = {"all": {name: 1.0 for name in payload["features"]["all"]}}
         payload["timing"] = single_window_contractual_timing(0.2, 2)
         observed_metrics = metrics_with_contract(0.2, 2)
         for key in CONTRACTUAL_METRIC_KEYS:
@@ -1160,8 +1164,7 @@ class BenchmarkRunnerTests(unittest.TestCase):
             if "values" not in payload:
                 payload["values"] = {
                     "all": {
-                        feature_name: 1.0
-                        for feature_name in payload["features"]["all"]
+                        feature_name: 1.0 for feature_name in payload["features"]["all"]
                     }
                 }
             contractual_metrics = metrics_with_contract(duration, measured)
@@ -1331,14 +1334,10 @@ class BenchmarkRunnerTests(unittest.TestCase):
         self.assertIn(("slow", "case-2"), calls)
         with BenchmarkLedger(self.report / "benchmark.sqlite3") as ledger:
             self.assertIsNotNone(
-                ledger.guardrail_decision(
-                    "slow\x1ftexture\x1fcase:case-1|modality:ct"
-                )
+                ledger.guardrail_decision("slow\x1ftexture\x1fcase:case-1|modality:ct")
             )
             self.assertIsNotNone(
-                ledger.guardrail_decision(
-                    "slow\x1ftexture\x1fcase:case-2|modality:ct"
-                )
+                ledger.guardrail_decision("slow\x1ftexture\x1fcase:case-2|modality:ct")
             )
 
     def test_resume_does_not_rerun_measured_tasks_and_rejects_parameter_drift(
@@ -1447,7 +1446,9 @@ class BenchmarkRunnerTests(unittest.TestCase):
         patchers = self.stable_patchers(fake)
         with patchers[0] as process, patchers[1], patchers[2], patchers[3]:
             with self.assertRaises(RunAlreadyExists):
-                run.main(self.args("--adapters", "pictologics", "--workloads", "texture"))
+                run.main(
+                    self.args("--adapters", "pictologics", "--workloads", "texture")
+                )
             process.assert_not_called()
 
     def test_adapter_command_receives_intensity_range(self) -> None:
@@ -1560,14 +1561,44 @@ class BenchmarkRunnerTests(unittest.TestCase):
 
     def test_timeout_policy_allows_a_single_nonbaseline_adapter(self) -> None:
         self.make_dataset([1000])
-        self.assertEqual(
-            run.main(
-                self.args(
-                    "--adapters", "pyradiomics", "--workloads", "texture", "--dry-run"
-                )
+        with (
+            mock.patch.object(
+                run,
+                "_adapter_environment_snapshots",
+                return_value={"pyradiomics": {"version": "3.1.0"}},
             ),
-            0,
-        )
+            mock.patch.object(
+                run,
+                "_machine_info",
+                return_value={
+                    "cpu_model": "fake",
+                    "cpu_count_physical": 1,
+                    "memory_total_bytes": 1024**3,
+                },
+            ),
+            mock.patch.object(run, "_git_commit", return_value="test"),
+        ):
+            self.assertEqual(
+                run.main(
+                    self.args(
+                        "--adapters",
+                        "pyradiomics",
+                        "--workloads",
+                        "texture",
+                        "--dry-run",
+                    )
+                ),
+                0,
+            )
+
+    def test_sampled_cpu_time_includes_process_descendants(self) -> None:
+        parent = mock.Mock(pid=100)
+        child = mock.Mock(pid=101)
+        parent.children.return_value = [child]
+        parent.cpu_times.return_value = mock.Mock(user=1.0, system=0.5)
+        child.cpu_times.return_value = mock.Mock(user=2.0, system=0.25)
+
+        self.assertEqual(run._safe_cpu_time(parent), 3.75)
 
     def test_selected_baseline_must_support_every_scheduled_workload(self) -> None:
         self.make_dataset([1000])
@@ -2059,6 +2090,34 @@ class BenchmarkRunnerTests(unittest.TestCase):
             )
         self.assertFalse(psutil.pid_exists(caught.exception.pid))
         self.assertEqual(caught.exception.phase, "startup_or_warmup")
+
+    def test_process_timeout_reaps_descendant_process(self) -> None:
+        child_pid_path = self.root / "child.pid"
+        child_code = "import time; time.sleep(30)"
+        parent_code = "\n".join(
+            [
+                "from pathlib import Path",
+                "import subprocess, sys, time",
+                f"child = subprocess.Popen([sys.executable, '-c', {child_code!r}])",
+                f"Path({str(child_pid_path)!r}).write_text(str(child.pid))",
+                "time.sleep(30)",
+            ]
+        )
+        with self.assertRaises(run.AdapterTimeout):
+            run._run_process_command(
+                [sys.executable, "-c", parent_code],
+                adapter_name="process-tree-fixture",
+                timeout=0.5,
+                sample_interval=0.01,
+                termination_grace=0.2,
+            )
+
+        self.assertTrue(child_pid_path.is_file())
+        child_pid = int(child_pid_path.read_text(encoding="utf-8"))
+        deadline = time.monotonic() + 2.0
+        while psutil.pid_exists(child_pid) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertFalse(psutil.pid_exists(child_pid))
 
     def test_process_timeout_retains_completed_call_samples(self) -> None:
         code = (

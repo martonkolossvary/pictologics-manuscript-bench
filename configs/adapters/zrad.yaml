@@ -18,3 +18,7 @@ environment_locks:
     path: "reproducibility/environment-locks/darwin-arm64/zrad.txt"
     sha256: "c4e9390a4603c0631852bf792571bb562df93dd160a3e237644967a10c262977"
     freeze_sha256: "a14e229a465d1d351bec58a668765f0c6eb215193f9e8d10717ffb4b6f3fc304"
+  Windows-AMD64:
+    path: "reproducibility/environment-locks/windows-amd64/zrad.txt"
+    sha256: "4f21c4b39b1094a3faf3580b6b1c6a9c9d498d3b1fe5c4e7917aafd9bfbea170"
+    freeze_sha256: "9e9e1e5c3c50dcd9cbf64502a0819755a15d6eb906aae9d85b52a6e453fa3445"

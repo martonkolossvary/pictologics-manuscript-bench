@@ -20,3 +20,7 @@ environment_locks:
     path: "reproducibility/environment-locks/darwin-arm64/medimage.txt"
     sha256: "b4935aa89d99f4e6d82d5f71a56b0477234ae537069dfa4a2e1d259d65a804ae"
     freeze_sha256: "120acd88dcdd1cb348a83345f0920fa35bf57e4f63bf55b90ce3ed435dad25c4"
+  Windows-AMD64:
+    path: "reproducibility/environment-locks/windows-amd64/medimage.txt"
+    sha256: "b548890c4f2c229e559175489af58ba67b1853c04307eb6ba4698036879bd50f"
+    freeze_sha256: "8a873a8403e3b67cf851c291ed2ef5d397013a9ca1f18774fd2b230bffa31929"

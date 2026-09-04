@@ -30,9 +30,7 @@ class PowerProvenanceTests(unittest.TestCase):
             ]
         )
         self.assertEqual(summary["classification"], "mixed_mode")
-        self.assertEqual(
-            summary["tags"], ["macos-automatic", "macos-high-power"]
-        )
+        self.assertEqual(summary["tags"], ["macos-automatic", "macos-high-power"])
         self.assertEqual(summary["contribution_tag"], "mixed-power-modes")
 
     def test_combined_summary_retains_all_session_provenance(self) -> None:
@@ -68,9 +66,7 @@ class PowerProvenanceTests(unittest.TestCase):
                 ),
             ),
         ]
-        with mock.patch(
-            "bench.power_provenance._completed", side_effect=completed
-        ):
+        with mock.patch("bench.power_provenance._completed", side_effect=completed):
             state = observe_task_power_state("Darwin")
 
         self.assertEqual(state["power_source"], "AC Power")
@@ -91,9 +87,7 @@ class PowerProvenanceTests(unittest.TestCase):
             ),
         ]
         with (
-            mock.patch(
-                "bench.power_provenance._completed", side_effect=completed
-            ),
+            mock.patch("bench.power_provenance._completed", side_effect=completed),
             mock.patch("bench.power_provenance.time.sleep") as sleep,
         ):
             state = observe_task_power_state("Darwin")
@@ -101,6 +95,41 @@ class PowerProvenanceTests(unittest.TestCase):
         self.assertEqual(state["energy_mode"], "high_power")
         self.assertEqual(state["probe_attempts"], 2)
         self.assertEqual(sleep.call_count, 1)
+
+    def test_windows_task_probe_uses_guid_not_localized_plan_name(self) -> None:
+        completed = mock.Mock(
+            returncode=0,
+            stdout=(
+                "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e "
+                "(Kiegyensúlyozott)"
+            ),
+        )
+        system_power = {
+            "power_source": "AC Power",
+            "battery_saver": False,
+            "battery_life_percent": None,
+            "battery_flag": 128,
+            "system_power_status_available": True,
+        }
+        with (
+            mock.patch("bench.power_provenance._completed", return_value=completed),
+            mock.patch(
+                "bench.power_provenance._windows_system_power_status",
+                return_value=system_power,
+            ),
+        ):
+            state = observe_task_power_state("Windows")
+
+        self.assertEqual(state["energy_mode"], "balanced")
+        self.assertEqual(state["power_mode_tag"], "windows-power-scheme-balanced")
+        self.assertEqual(
+            state["power_scheme_guid"],
+            "381b4222-f694-41f0-9685-ff5bb260df2e",
+        )
+        self.assertEqual(state["power_scheme_name"], "Kiegyensúlyozott")
+        self.assertEqual(state["power_source"], "AC Power")
+        self.assertFalse(state["battery_saver"])
+        self.assertEqual(state["probe_errors"], [])
 
     def test_task_summary_uses_task_tags_not_session_settings(self) -> None:
         summary = summarize_task_power_records(

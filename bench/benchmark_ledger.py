@@ -41,9 +41,25 @@ class RunIntegrityError(RuntimeError):
     pass
 
 
+def native_path(path: Path) -> str:
+    """Return an absolute path accepted by legacy and long-path Windows hosts."""
+
+    resolved = os.path.abspath(os.fspath(path))
+    if os.name != "nt" or resolved.startswith("\\\\?\\"):
+        return resolved
+    if resolved.startswith("\\\\"):
+        return f"\\\\?\\UNC\\{resolved[2:]}"
+    return f"\\\\?\\{resolved}"
+
+
+def read_text(path: Path, *, encoding: str = "utf-8") -> str:
+    with open(native_path(path), encoding=encoding) as stream:
+        return stream.read()
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as stream:
+    with open(native_path(path), "rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
@@ -64,9 +80,12 @@ def _fsync_directory(path: Path) -> None:
 
 def atomic_write_bytes(path: Path, data: bytes) -> str:
     """Durably replace *path* and return the SHA-256 of the committed bytes."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+    os.makedirs(native_path(path.parent), exist_ok=True)
+    # Keep the staging name short.  Windows' legacy MAX_PATH handling counts
+    # this name as well as the committed target, so repeating a long artifact
+    # name here can make an otherwise safe result path fail before os.replace.
     descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+        prefix=".tmp-", suffix=path.suffix, dir=native_path(path.parent)
     )
     temporary = Path(temporary_name)
     try:
@@ -74,7 +93,7 @@ def atomic_write_bytes(path: Path, data: bytes) -> str:
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        os.replace(temporary_name, native_path(path))
         _fsync_directory(path.parent)
     except BaseException:
         try:
@@ -896,9 +915,8 @@ class BenchmarkLedger:
                 "SELECT cutoff_complexity FROM timeout_cutoffs WHERE scope_key = ?",
                 (scope_key,),
             ).fetchone()
-            if (
-                existing is not None
-                and int(existing["cutoff_complexity"]) <= int(cutoff_complexity)
+            if existing is not None and int(existing["cutoff_complexity"]) <= int(
+                cutoff_complexity
             ):
                 return
             self.connection.execute(

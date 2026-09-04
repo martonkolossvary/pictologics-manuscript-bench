@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "profile_id": "windows-9800x3d-01",
+  "machine_id": "windows-9800x3d-01",
+  "machine_label": "AMD Ryzen 7 9800X3D (8-core CPU, 32 GiB RAM)",
+  "cpu_model": "AMD Ryzen 7 9800X3D 8-Core Processor",
+  "cpu_base_ghz": 4.7,
+  "expected_hardware": {
+    "platform": "Windows",
+    "machine": "AMD64",
+    "cpu_count_physical": 8,
+    "cpu_count_logical": 16,
+    "memory_total_bytes": 33396543488
+  },
+  "required_runtime_state": {
+    "power_source": "AC Power",
+    "battery_saver": false,
+    "sleep_assertion_during_calculation": true
+  },
+  "benchmark_settings": {
+    "background_load": "operator_quiescent",
+    "operating_system_updates": "deferred_for_complete_machine_run",
+    "power_source": "AC Power",
+    "energy_mode_policy": "observed_at_task_boundaries_never_gated",
+    "sleep_prevention": "SetThreadExecutionState_ES_CONTINUOUS_ES_SYSTEM_REQUIRED",
+    "result_storage": "local_unsynchronised_ntfs",
+    "thread_policy": "all_physical_cores_per_isolated_task"
+  },
+  "notes": [
+    "The public profile intentionally excludes serial numbers, hardware UUIDs, hostnames, and account names.",
+    "The exact Windows and Python versions are captured separately in every immutable run specification.",
+    "The launcher records the active power-scheme GUID with a localization-independent tag and GetSystemPowerStatus AC/battery state at launch; the controller repeats these observations immediately before and after every task.",
+    "Power scheme is provenance rather than an eligibility gate. AC power, battery saver off, and the launcher-owned system-sleep assertion are required for benchmark execution.",
+    "Changing power scheme never changes the protocol fingerprint; every task retains both boundary observations so reports can identify single-mode, mixed-mode, unavailable-mode, and mixed-within-task results.",
+    "Operator-controlled settings are frozen in the profile but must still be confirmed before each uninterrupted machine run."
+  ]
+}

@@ -18,6 +18,8 @@ from bench.benchmark_workspace import _task_inventory
 from scripts.launch_benchmark import (
     PMSET_MODE_ATTEMPTS,
     _darwin_power_state,
+    _disable_windows_sleep_prevention,
+    _enable_windows_sleep_prevention,
     _effective_host_settings,
     _existing_result_resume_errors,
     _git_source_state,
@@ -112,9 +114,7 @@ class BenchmarkWorkspaceTests(unittest.TestCase):
         profile = {
             "payload": {
                 "benchmark_settings": {
-                    "energy_mode_policy": (
-                        "observed_tagged_per_session_never_gated"
-                    )
+                    "energy_mode_policy": ("observed_tagged_per_session_never_gated")
                 }
             }
         }
@@ -303,10 +303,68 @@ class BenchmarkWorkspaceTests(unittest.TestCase):
                 ["controller"],
                 creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
             )
-            self.assertEqual(process.forwarded_signals, [signal.SIGINT])
+            self.assertEqual(process.forwarded_signals, [signal.CTRL_BREAK_EVENT])
         else:
             popen.assert_called_once_with(["controller"], start_new_session=True)
             killpg.assert_called_once_with(4321, signal.SIGINT)
+
+    def test_windows_sleep_prevention_is_acquired_and_released(self) -> None:
+        with (
+            patch("scripts.launch_benchmark.platform.system", return_value="Windows"),
+            patch(
+                "scripts.launch_benchmark._set_windows_execution_state",
+                side_effect=[1, 1],
+            ) as execution_state,
+        ):
+            self.assertTrue(_enable_windows_sleep_prevention())
+            _disable_windows_sleep_prevention()
+
+        self.assertEqual(
+            execution_state.call_args_list,
+            [mock.call(0x80000001), mock.call(0x80000000)],
+        )
+
+    def test_windows_host_preflight_records_live_power_provenance(self) -> None:
+        profile = {
+            "path": "C:/profile.json",
+            "sha256": "a" * 64,
+            "payload": {
+                "profile_id": "test-windows",
+                "expected_hardware": {"platform": "Windows"},
+                "required_runtime_state": {
+                    "power_source": "AC Power",
+                    "battery_saver": False,
+                    "sleep_assertion_during_calculation": True,
+                },
+                "benchmark_settings": {},
+            },
+        }
+        power_state = {
+            "platform": "Windows",
+            "power_source": "AC Power",
+            "battery_saver": False,
+            "energy_mode": "balanced",
+            "energy_mode_observation_status": "observed",
+            "power_mode_tag": "windows-power-scheme-balanced",
+            "power_scheme_guid": "381b4222-f694-41f0-9685-ff5bb260df2e",
+            "power_scheme_name": "Balanced",
+            "probe_errors": [],
+        }
+        with (
+            patch("scripts.launch_benchmark.platform.system", return_value="Windows"),
+            patch(
+                "scripts.launch_benchmark.observe_task_power_state",
+                return_value=power_state,
+            ),
+        ):
+            preflight = _host_profile_preflight(
+                profile,
+                require_sleep_assertion=True,
+                windows_sleep_prevention_active=True,
+            )
+
+        self.assertEqual(preflight["status"], "pass")
+        self.assertTrue(preflight["observed_runtime_state"]["sleep_prevention_active"])
 
     def test_launcher_scales_project_progress_for_appended_repeats(self) -> None:
         workspace = {
@@ -355,9 +413,7 @@ class BenchmarkWorkspaceTests(unittest.TestCase):
             self.assertEqual(command[command.index("--project-total-tasks") + 1], "200")
             self.assertNotIn("--enable-speed-truncation", command)
             self.assertNotIn("--guardrail-skip-ratio", command)
-            self.assertEqual(
-                command[command.index("--machine-id") + 1], "test-host"
-            )
+            self.assertEqual(command[command.index("--machine-id") + 1], "test-host")
             self.assertEqual(
                 command[command.index("--host-profile-id") + 1], "test-host"
             )
@@ -407,9 +463,7 @@ class BenchmarkWorkspaceTests(unittest.TestCase):
             "test-host",
         )
         with self.assertRaisesRegex(ValueError, "conflicts"):
-            _profile_value(
-                "different-host", profile, "machine_id", flag="--machine-id"
-            )
+            _profile_value("different-host", profile, "machine_id", flag="--machine-id")
 
     def test_cloud_storage_path_is_detected(self) -> None:
         path = Path("/Users/test/Library/CloudStorage/OneDrive-Personal/results")

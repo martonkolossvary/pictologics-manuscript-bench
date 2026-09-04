@@ -8,6 +8,8 @@ both ``--execute`` and the literal acknowledgement ``--confirm CALCULATE``.
 from __future__ import annotations
 
 import argparse
+import atexit
+import ctypes
 import hashlib
 import json
 import os
@@ -19,6 +21,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from typing import Any
@@ -28,6 +31,7 @@ import psutil
 from bench.benchmark_ledger import atomic_write_json, sha256_file
 from bench.benchmark_models import RUN_SPEC_SCHEMA_VERSION
 from bench.benchmark_workspace import WORKSPACE_MANIFEST_SCHEMA_VERSION
+from bench.power_provenance import observe_task_power_state
 
 
 PILLARS = (
@@ -44,6 +48,8 @@ RESULT_FIXED_RESERVE_BYTES = 2 * 1024**3
 PMSET_ENERGY_MODES = {0: "automatic", 1: "low_power", 2: "high_power"}
 PMSET_MODE_ATTEMPTS = 30
 PMSET_MODE_RETRY_SECONDS = 0.5
+ES_SYSTEM_REQUIRED = 0x00000001
+ES_CONTINUOUS = 0x80000000
 
 
 def _portable_command(
@@ -200,9 +206,7 @@ def _darwin_power_state() -> dict[str, Any]:
             if low_power:
                 value = int(low_power.group(1))
                 state["low_power_mode"] = value
-                state["energy_mode"] = PMSET_ENERGY_MODES.get(
-                    value, f"unknown_{value}"
-                )
+                state["energy_mode"] = PMSET_ENERGY_MODES.get(value, f"unknown_{value}")
                 break
         if attempt + 1 < PMSET_MODE_ATTEMPTS:
             time.sleep(PMSET_MODE_RETRY_SECONDS)
@@ -230,9 +234,7 @@ def _darwin_power_state() -> dict[str, Any]:
             if low_power:
                 value = int(low_power.group(1))
                 state["low_power_mode"] = value
-                state["energy_mode"] = PMSET_ENERGY_MODES.get(
-                    value, f"unknown_{value}"
-                )
+                state["energy_mode"] = PMSET_ENERGY_MODES.get(value, f"unknown_{value}")
         except (OSError, subprocess.SubprocessError):
             custom_probe_failed = True
     if state["low_power_mode"] is None:
@@ -266,10 +268,33 @@ def _darwin_power_state() -> dict[str, Any]:
     return state
 
 
+def _set_windows_execution_state(flags: int) -> int:
+    try:
+        return int(ctypes.windll.kernel32.SetThreadExecutionState(flags))
+    except (AttributeError, OSError) as exc:
+        raise OSError("SetThreadExecutionState is unavailable") from exc
+
+
+def _enable_windows_sleep_prevention() -> bool:
+    """Hold a system-sleep assertion for the executing launcher thread."""
+
+    if platform.system() != "Windows":
+        return False
+    if not _set_windows_execution_state(ES_CONTINUOUS | ES_SYSTEM_REQUIRED):
+        raise OSError("Windows refused the benchmark sleep-prevention request")
+    return True
+
+
+def _disable_windows_sleep_prevention() -> None:
+    if platform.system() == "Windows":
+        _set_windows_execution_state(ES_CONTINUOUS)
+
+
 def _host_profile_preflight(
     profile: dict[str, Any] | None,
     *,
     require_sleep_assertion: bool,
+    windows_sleep_prevention_active: bool = False,
 ) -> dict[str, Any] | None:
     if profile is None:
         return None
@@ -310,6 +335,33 @@ def _host_profile_preflight(
             errors.append(
                 "a macOS sleep-prevention assertion is required during calculation; "
                 "use scripts/run_benchmark.sh"
+            )
+    elif expected.get("platform") == "Windows":
+        runtime_state = observe_task_power_state("Windows")
+        runtime_state["sleep_prevention_active"] = bool(windows_sleep_prevention_active)
+        required_power = required_state.get("power_source")
+        if required_power and runtime_state["power_source"] != required_power:
+            errors.append(
+                f"power source must be {required_power!r}; observed "
+                f"{runtime_state['power_source']!r}"
+            )
+        required_battery_saver = required_state.get("battery_saver")
+        if (
+            required_battery_saver is not None
+            and runtime_state["battery_saver"] != required_battery_saver
+        ):
+            errors.append(
+                f"battery saver must be {required_battery_saver!r}; observed "
+                f"{runtime_state['battery_saver']!r}"
+            )
+        if (
+            require_sleep_assertion
+            and required_state.get("sleep_assertion_during_calculation") is True
+            and not windows_sleep_prevention_active
+        ):
+            errors.append(
+                "a Windows sleep-prevention assertion is required during calculation; "
+                "use scripts/run_benchmark.ps1"
             )
     return {
         "status": "pass" if not errors else "fail",
@@ -380,9 +432,11 @@ def _staged_input_bytes(root: Path, workspace: dict[str, Any]) -> int:
         unique_files: dict[tuple[str, str], int] = {}
         for item in manifest.get("files", []):
             checksum = str(item.get("sha256") or "").lower()
-            suffix = ".nii.gz" if str(item.get("path") or "").lower().endswith(
+            suffix = (
                 ".nii.gz"
-            ) else Path(str(item.get("path") or "")).suffix.lower()
+                if str(item.get("path") or "").lower().endswith(".nii.gz")
+                else Path(str(item.get("path") or "")).suffix.lower()
+            )
             unique_files[(checksum, suffix)] = int(item.get("bytes") or 0)
         total += sum(unique_files.values())
     return total
@@ -439,6 +493,7 @@ def _result_preflight(
     host_profile: dict[str, Any] | None = None,
     require_sleep_assertion: bool = False,
     require_clean_source: bool = False,
+    windows_sleep_prevention_active: bool = False,
 ) -> dict[str, Any]:
     """Check storage isolation without creating a result directory."""
 
@@ -483,9 +538,7 @@ def _result_preflight(
     errors: list[str] = []
     warnings: list[str] = []
     source_state = (
-        _git_source_state(root.resolve().parents[1])
-        if require_clean_source
-        else None
+        _git_source_state(root.resolve().parents[1]) if require_clean_source else None
     )
     if require_clean_source and source_state["status"] != "clean":
         errors.append(
@@ -506,6 +559,7 @@ def _result_preflight(
     host_preflight = _host_profile_preflight(
         host_profile,
         require_sleep_assertion=require_sleep_assertion,
+        windows_sleep_prevention_active=windows_sleep_prevention_active,
     )
     if host_preflight and host_preflight["status"] != "pass":
         errors.extend(host_preflight["errors"])
@@ -534,10 +588,9 @@ def _result_preflight(
             "the source/input workspace is cloud-synchronised; fully hydrate it and "
             "prefer a short local execution copy, especially on Windows"
         )
-    temp_roots = [
-        Path(value).resolve()
-        for value in {str(Path(os.getenv("TMPDIR") or "/tmp")), "/tmp"}
-    ]
+    temp_roots = {Path(tempfile.gettempdir()).resolve()}
+    if os.name != "nt":
+        temp_roots.add(Path("/tmp").resolve())
     if any(
         machine_root == temporary or temporary in machine_root.parents
         for temporary in temp_roots
@@ -581,19 +634,48 @@ def _effective_host_settings(
     host_preflight = preflight.get("host_profile") or {}
     runtime_state = host_preflight.get("observed_runtime_state") or {}
     if runtime_state:
+        is_windows = (
+            runtime_state.get("platform") == "Windows"
+            or "power_scheme_guid" in runtime_state
+        )
+        for field in (
+            "battery_life_percent",
+            "battery_saver",
+            "energy_mode",
+            "energy_mode_observation_status",
+            "pmset_lowpowermode",
+            "power_mode_tag",
+            "power_scheme_guid",
+            "power_scheme_name",
+            "power_source",
+            "sleep_prevention_active",
+        ):
+            if field in runtime_state:
+                settings[field] = runtime_state[field]
+        settings["energy_mode"] = runtime_state.get("energy_mode") or "unavailable"
         mode_value = runtime_state.get("low_power_mode")
-        mode_label = runtime_state.get("energy_mode") or "unavailable"
-        settings["power_source"] = runtime_state.get("power_source")
-        settings["energy_mode"] = mode_label
-        settings["pmset_lowpowermode"] = mode_value
-        settings["energy_mode_observation_status"] = (
-            "observed" if mode_value is not None else "unavailable"
-        )
-        settings["power_mode_tag"] = (
-            f"macos-{str(mode_label).replace('_', '-')}-pmset-{mode_value}"
-            if mode_value is not None
-            else "macos-energy-mode-unavailable"
-        )
+        if (
+            not is_windows
+            and "pmset_lowpowermode" not in settings
+            and "low_power_mode" in runtime_state
+        ):
+            settings["pmset_lowpowermode"] = mode_value
+        if not settings.get("power_mode_tag"):
+            mode_label = runtime_state.get("energy_mode") or "unavailable"
+            if is_windows:
+                settings["power_mode_tag"] = "windows-power-scheme-unavailable"
+            else:
+                settings["power_mode_tag"] = (
+                    f"macos-{str(mode_label).replace('_', '-')}-pmset-{mode_value}"
+                    if mode_value is not None
+                    else "macos-energy-mode-unavailable"
+                )
+        if not settings.get("energy_mode_observation_status"):
+            settings["energy_mode_observation_status"] = (
+                "observed"
+                if (settings["energy_mode"] != "unavailable")
+                else "unavailable"
+            )
         settings["power_state_probe_errors"] = list(
             runtime_state.get("probe_errors") or []
         )
@@ -649,8 +731,7 @@ def _existing_result_resume_errors(
             continue
         if not ledger_path.is_file() or not run_spec_path.is_file():
             errors.append(
-                f"existing result data for {pillar} is incomplete and cannot be "
-                "resumed"
+                f"existing result data for {pillar} is incomplete and cannot be resumed"
             )
             continue
         try:
@@ -675,9 +756,7 @@ def _existing_result_resume_errors(
                 mismatches.append("workload set differs")
             if run_spec.get("adapters") != expected_adapters:
                 mismatches.append("adapter set differs")
-            expected_manifest_sha256 = workspace["datasets"][pillar][
-                "manifest_sha256"
-            ]
+            expected_manifest_sha256 = workspace["datasets"][pillar]["manifest_sha256"]
             if run_spec.get("manifest_sha256") != expected_manifest_sha256:
                 mismatches.append("dataset manifest differs")
         run_meta_path = report_dir / "run_meta.json"
@@ -812,7 +891,10 @@ def _run_controller_command(command: list[str]) -> int:
             return
         try:
             if os.name == "nt":
-                process.send_signal(signum)
+                # The controller is in its own process group.  CTRL_BREAK is
+                # the reliable group-targeted console event on Windows; the
+                # controller registers SIGBREAK as an orderly-stop request.
+                process.send_signal(signal.CTRL_BREAK_EVENT)
             else:
                 os.killpg(process.pid, signum)
         except (ProcessLookupError, PermissionError, OSError):
@@ -826,7 +908,10 @@ def _run_controller_command(command: list[str]) -> int:
             send_to_controller(int(signum))
 
     if threading.current_thread() is threading.main_thread():
-        for signum in (signal.SIGINT, signal.SIGTERM):
+        signals = [signal.SIGINT, signal.SIGTERM]
+        if hasattr(signal, "SIGBREAK"):
+            signals.append(signal.SIGBREAK)
+        for signum in signals:
             previous_handlers[int(signum)] = signal.getsignal(signum)
             signal.signal(signum, forward_signal)
     try:
@@ -888,6 +973,12 @@ def main() -> int:
     if args.execute and args.validate_plans:
         parser.error("choose either --execute or --validate-plans")
 
+    windows_sleep_prevention_active = (
+        _enable_windows_sleep_prevention() if args.execute else False
+    )
+    if windows_sleep_prevention_active:
+        atexit.register(_disable_windows_sleep_prevention)
+
     root = Path(args.workspace_root).expanduser().resolve()
     workspace = _load_workspace(root)
     host_profile = _load_host_profile(args.host_profile) if args.host_profile else None
@@ -928,6 +1019,7 @@ def main() -> int:
         host_profile=host_profile,
         require_sleep_assertion=args.execute,
         require_clean_source=args.execute or args.validate_plans,
+        windows_sleep_prevention_active=windows_sleep_prevention_active,
     )
     if (args.execute or args.validate_plans) and preflight["status"] != "pass":
         parser.error("execution preflight failed: " + "; ".join(preflight["errors"]))
@@ -1021,11 +1113,16 @@ def main() -> int:
         atomic_write_json(attestation_dir / "controller_dry_run.json", record)
         print(json.dumps(record, indent=2))
         return 0
-    for command in commands:
-        returncode = _run_controller_command(command)
-        if returncode != 0:
-            return returncode
-    return 0
+    try:
+        for command in commands:
+            returncode = _run_controller_command(command)
+            if returncode != 0:
+                return returncode
+        return 0
+    finally:
+        if windows_sleep_prevention_active:
+            _disable_windows_sleep_prevention()
+            atexit.unregister(_disable_windows_sleep_prevention)
 
 
 if __name__ == "__main__":

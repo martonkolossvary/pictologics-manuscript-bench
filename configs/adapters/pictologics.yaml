@@ -16,3 +16,7 @@ environment_locks:
     path: "reproducibility/environment-locks/darwin-arm64/pictologics.txt"
     sha256: "d381af94f8f27fdb181b783c079e46ca5718bec4d1a6b8886755b9f2e6bc84d3"
     freeze_sha256: "635622dae78d6d8dda82ac56b286206ed2f7a3e735522942263bf33f75709712"
+  Windows-AMD64:
+    path: "reproducibility/environment-locks/windows-amd64/pictologics.txt"
+    sha256: "957d7c19615e86622f71791b69b810fd22b00fbc53fcfe7adcbd88ac2c1912ef"
+    freeze_sha256: "3d76bbd7a6427450f27a07009f4dbdd5b877a36a3810039c9716a484daf42c61"

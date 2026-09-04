@@ -79,9 +79,12 @@ silently substituting another input image is not permitted.
 
 - Git
 - CPython 3.12 for the controller and the Pictologics, MIRP, and Z-Rad adapters
-- CPython 3.11 for PyRadiomics and CPython 3.10 for MEDimage; these may be
-  installed system-wide or managed by `uv`
+- CPython 3.10 for MEDimage and CPython 3.11 for the PyRadiomics source build;
+  Windows instead uses CPython 3.9 with the official, checksum-pinned 3.1.0
+  wheel. These runtimes may be installed system-wide or managed by `uv`.
 - Poetry 2.2 or newer, below 3.0
+- `uv` 0.8 on Windows; MEDimage's legacy Python metadata cannot be resolved
+  correctly by current pip releases
 - network access for the first input and environment bootstrap
 - enough local SSD space for inputs, environments, staged inputs, and results
 - a local, non-synchronised result directory
@@ -207,13 +210,16 @@ poetry run python scripts/prepare_benchmark_workspace.py `
 poetry run python scripts/prepare_benchmark_workspace.py `
   --output-root data/benchmark --validate-only
 ./scripts/qualify_benchmark_host.ps1 `
-  -ResultRoot D:\pictobench-results `
-  -MachineId windows-workstation-01 `
-  -MachineLabel "Windows workstation"
+  -ResultRoot C:\pictobench-results-SOURCE_COMMIT `
+  -HostProfile configs/benchmark/hosts/windows-9800x3d-01.json
 ```
 
-Use one stable, non-identifying machine ID per host. Keep workspace and results
-out of synchronised folders and within the Windows path-length budget.
+The checked-in Windows profile is specific to the AMD Ryzen 7 9800X3D
+qualification host. A different Windows machine needs its own reviewed,
+public-safe profile. Use one stable, non-identifying machine ID per host. Keep
+workspace and results out of synchronised folders and within the Windows
+path-length budget. The setup script checks Python 3.9, 3.10, and 3.12 and
+finds a per-user `uv.exe` even when its Scripts directory is not on `PATH`.
 
 ## Inspect the plan without calculating
 
@@ -263,11 +269,17 @@ sleep-prevention assertion. On Windows use:
 ```powershell
 ./scripts/run_benchmark.ps1 `
   --workspace-root data/benchmark `
-  --result-root D:\pictobench-results `
-  --machine-id windows-workstation-01 `
-  --machine-label "Windows workstation" `
+  --result-root C:\pictobench-results-SOURCE_COMMIT `
+  --host-profile configs/benchmark/hosts/windows-9800x3d-01.json `
   --execute --confirm CALCULATE
 ```
+
+The launcher holds `SetThreadExecutionState(ES_CONTINUOUS |
+ES_SYSTEM_REQUIRED)` only while calculations are running and releases it on
+exit. It records the active power-scheme GUID using a
+localization-independent tag plus AC/battery and battery-saver state at launch
+and immediately before and after every task. Power-scheme changes remain
+visible provenance and do not invalidate a safe resume.
 
 The launcher always supplies `--resume`. Re-running the exact command resumes
 the transactional ledgers without repeating committed measured tasks. A

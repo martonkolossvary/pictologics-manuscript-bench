@@ -5,7 +5,12 @@ from pathlib import Path
 import pytest
 
 import bench.submission as submission
-from bench.benchmark_ledger import atomic_write_json, atomic_write_text, sha256_file
+from bench.benchmark_ledger import (
+    atomic_write_json,
+    atomic_write_text,
+    native_path,
+    sha256_file,
+)
 from bench.benchmark_models import fingerprint, run_spec_identity
 from bench.submission import (
     PILLARS,
@@ -46,7 +51,7 @@ def _write_bundle(root: Path) -> Path:
             "artifacts": [
                 {
                     "path": artifact.name,
-                    "bytes": artifact.stat().st_size,
+                    "bytes": Path(native_path(artifact)).stat().st_size,
                     "sha256": sha256_file(artifact),
                 }
             ],
@@ -57,7 +62,7 @@ def _write_bundle(root: Path) -> Path:
             files.append(
                 {
                     "path": path.relative_to(bundle).as_posix(),
-                    "bytes": path.stat().st_size,
+                    "bytes": Path(native_path(path)).stat().st_size,
                     "sha256": sha256_file(path),
                 }
             )
@@ -123,7 +128,9 @@ def test_submission_bundle_is_complete_and_checksum_bound(tmp_path: Path) -> Non
 
 def test_submission_bundle_rejects_modified_artifact(tmp_path: Path) -> None:
     bundle = _write_bundle(tmp_path / "benchmark-results")
-    (bundle / PILLARS[0] / "summary.csv").write_text("changed\n", encoding="utf-8")
+    Path(native_path(bundle / PILLARS[0] / "summary.csv")).write_text(
+        "changed\n", encoding="utf-8"
+    )
 
     with pytest.raises(SubmissionError, match="size mismatch|checksum mismatch"):
         validate_submission_bundle(bundle)
@@ -183,7 +190,9 @@ def test_packager_emits_one_complete_architecture_namespaced_bundle(
             },
         )
 
-    monkeypatch.setattr(submission, "_git_source_commit", lambda repository: source_commit)
+    monkeypatch.setattr(
+        submission, "_git_source_commit", lambda repository: source_commit
+    )
     monkeypatch.setattr("bench.report.generate_report", fake_generate_report)
 
     bundle = submission.package_submission(
