@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "profile_id": "mac-m4pro-01",
+  "machine_id": "mac-m4pro-01",
+  "machine_label": "Apple M4 Pro (14-core CPU, 48 GiB RAM)",
+  "cpu_model": "Apple M4 Pro",
+  "expected_hardware": {
+    "platform": "Darwin",
+    "machine": "arm64",
+    "cpu_count_physical": 14,
+    "cpu_count_logical": 14,
+    "memory_total_bytes": 51539607552
+  },
+  "required_runtime_state": {
+    "power_source": "AC Power",
+    "sleep_assertion_during_calculation": true
+  },
+  "benchmark_settings": {
+    "background_load": "operator_quiescent",
+    "operating_system_updates": "deferred_for_complete_machine_run",
+    "power_source": "AC Power",
+    "energy_mode_policy": "observed_at_task_boundaries_never_gated",
+    "sleep_prevention": "caffeinate_-dimsu",
+    "result_storage": "local_unsynchronised_ssd",
+    "thread_policy": "all_physical_cores_per_isolated_task"
+  },
+  "notes": [
+    "The public profile intentionally excludes serial numbers, hardware UUIDs, hostnames, and account names.",
+    "The exact OS and Python versions are captured separately in every immutable run specification.",
+    "The launcher records session power provenance and the controller probes an explicit power-mode tag, observation status, macOS Energy Mode label, raw pmset lowpowermode value, and probe errors immediately before and after every task.",
+    "Energy Mode never gates execution; an unavailable observation is explicitly tagged as unavailable rather than inferred.",
+    "Changing Energy Mode never changes the protocol fingerprint; every task retains both boundary observations so reports can identify single-mode, mixed-mode, unavailable-mode, and mixed-within-task results.",
+    "Operator-controlled settings are frozen in the profile but must still be confirmed before each uninterrupted machine run."
+  ]
+}

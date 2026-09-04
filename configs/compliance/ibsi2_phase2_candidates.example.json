@@ -1,0 +1,90 @@
+{
+  "schema_version": 3,
+  "kind": "ibsi2_phase2_response_maps",
+  "adapters": ["pictologics"],
+  "support_declarations": [
+    {"adapter": "pictologics", "filter_id": "1.A", "native_supported": true, "reason": "Reviewed native filter implementation is available", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "filter_id": "1.B", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "filter_id": "2.A", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "filter_id": "2.B", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "filter_id": "3.A", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "filter_id": "3.B", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "filter_id": "4.A", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "filter_id": "4.B", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "filter_id": "5.A", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "filter_id": "5.B", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "filter_id": "6.A", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "filter_id": "6.B", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "filter_id": "7.A", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "filter_id": "7.B", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "filter_id": "8.A", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "filter_id": "8.B", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "filter_id": "9.A", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "filter_id": "9.B", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "filter_id": "10.A", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "filter_id": "10.B", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "filter_id": "11.A", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "filter_id": "11.B", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"}
+  ],
+  "source_data": {
+    "repository": "https://github.com/theibsi/data_sets",
+    "commit": "6da96021bc91faf4c0cb7fd7fa56a4225d2064a8",
+    "image_path": "source/ibsi2/phase2/PAT1.nii.gz",
+    "image_sha256": "909129fdf99d5f5fd17bc568b1834d31edce8663ea6746c6020720bfc1d7bbcb",
+    "mask_path": "source/ibsi2/phase2/PAT1-mask.nii.gz",
+    "mask_sha256": "0e9243e473b1255c60e6460df465d0b07b65436d6e0c691fe3d17bca0594ae78"
+  },
+  "protocol_review": {
+    "status": "reviewed",
+    "reviewed_against": "IBSI 2 reference manual v9, Phase 1 Table 6.1 and Phase 2 Tables 6.2-6.3, including implementation-selected Phase 2 padding",
+    "reviewed_by": "<reviewer-identity>",
+    "reviewed_at": "<ISO-8601-date>"
+  },
+  "instructions": [
+    "Copy this file outside source control and replace every placeholder.",
+    "List every adapter in adapters and include exactly one support declaration per adapter/filter_id (22 per adapter).",
+    "Add exactly one response-map entry for every native_supported=true declaration and none for native_supported=false.",
+    "Reviewed native-unsupported filters remain valid explicit coverage classifications; official numerical references exist for 1.A through 9.B.",
+    "The response-map mask must be derived from the pinned unfiltered PAT1 input under the reviewed A/B preprocessing configuration.",
+    "Use the checked-in ibsi2_phase2_preprocessing_A/B.json content; the loader validates protocol fields as well as its hash.",
+    "Each filter JSON must identify schema/specification/phase/manual version/filter ID and contain non-empty reviewed parameters.",
+    "Every path is relative to this manifest and is bound to its SHA-256 digest."
+  ],
+  "entries": [
+    {
+      "adapter": "pictologics",
+      "filter_id": "1.A",
+      "image_path": "maps/pictologics/1.A.nii.gz",
+      "mask_path": "maps/pictologics/1.A-mask.nii.gz",
+      "image_sha256": "<64-character-sha256>",
+      "mask_sha256": "<64-character-sha256>",
+      "filter_input_path": "preprocessed/phase2/A-image.nii.gz",
+      "filter_input_sha256": "<64-character-sha256>",
+      "generator_distribution": "pictologics",
+      "generator_version": "0.5.1",
+      "generator_source_revision": "<source-commit-or-build-id>",
+      "generator_source_path": "generator/ibsi2_native_backends.py",
+      "generator_source_sha256": "<64-character-sha256>",
+      "generator_entrypoint": "<fully-qualified-generator-entrypoint>",
+      "generator_command": "<exact-reproducible-command>",
+      "executed_parameters": {
+        "filter": "none",
+        "dimensionality": 2
+      },
+      "boundary_execution": {
+        "policy": "not_applicable",
+        "selected": null,
+        "effective": null,
+        "implementation": "not_applicable"
+      },
+      "native_capability": null,
+      "filter_config_revision": "<reviewed-filter-config-revision>",
+      "filter_config_path": "configs/ibsi2/phase2/1.A.json",
+      "filter_config_sha256": "<64-character-sha256>",
+      "preprocessing_config_path": "protocol/ibsi2_phase2_preprocessing_A.json",
+      "preprocessing_config_sha256": "<64-character-sha256>",
+      "environment_lock_path": "environments/pictologics.lock",
+      "environment_lock_sha256": "<64-character-sha256>"
+    }
+  ]
+}

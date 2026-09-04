@@ -1,0 +1,14 @@
+{
+  "contract_id": "adapter_feature_surface_benchmark",
+  "contract_path": "reproducibility/contracts/adapter_feature_surface.csv",
+  "contract_sha256": "97e2459048397aaa234fa0aae48a40f994720b3763417f1bfde563802e1230d5",
+  "derivation": {
+    "delimiter": ", ",
+    "documented_alias_suffix": " [documented exact alias]",
+    "selection": "native feature names declared by the current adapter mappings, deduplicated by adapter and family",
+    "verification": "python3 scripts/audit_adapter_feature_surface.py"
+  },
+  "purpose": "Frozen current adapter feature surface used by the untimed prebenchmark audit.",
+  "rows": 52,
+  "schema_version": 2
+}

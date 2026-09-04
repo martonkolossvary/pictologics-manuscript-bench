@@ -1,0 +1,113 @@
+{
+  "schema_version": 3,
+  "kind": "ibsi2_phase1_response_maps",
+  "adapters": ["pictologics"],
+  "support_declarations": [
+    {"adapter": "pictologics", "test_id": "1.a.1", "native_supported": true, "reason": "Reviewed native filter implementation is available", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "1.a.2", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "1.a.3", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "1.a.4", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "1.b.1", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "2.a", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "2.b", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "2.c", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "3.a.1", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "3.a.2", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "3.a.3", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "3.b.1", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "3.b.2", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "3.b.3", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "3.c.1", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "3.c.2", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "3.c.3", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "4.a.1", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "4.a.2", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "4.b.1", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "4.b.2", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "5.a.1", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "5.a.2", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "6.a.1", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "6.a.2", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "7.a.1", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "7.a.2", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "8.a.1", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "8.a.2", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "8.a.3", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "9.a", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "9.b.1", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "9.b.2", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "10.a", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "10.b.1", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"},
+    {"adapter": "pictologics", "test_id": "10.b.2", "native_supported": false, "reason": "Example reviewed as not natively supported", "evidence": "Replace with an exact source/API/version audit citation"}
+  ],
+  "source_data": {
+    "repository": "https://github.com/theibsi/data_sets",
+    "commit": "6da96021bc91faf4c0cb7fd7fa56a4225d2064a8"
+  },
+  "protocol_review": {
+    "status": "reviewed",
+    "reviewed_against": "IBSI 2 reference manual v9, Phase 1 Table 6.1 and Phase 2 Tables 6.2-6.3, including implementation-selected Phase 2 padding",
+    "reviewed_by": "<reviewer-identity>",
+    "reviewed_at": "<ISO-8601-date>"
+  },
+  "instructions": [
+    "Copy this file outside source control and replace every placeholder.",
+    "List every adapter in adapters and include exactly one support declaration per adapter/test_id (36 per adapter).",
+    "Add exactly one response-map entry for every native_supported=true declaration and none for native_supported=false.",
+    "Reviewed native-unsupported tests remain valid explicit coverage classifications; 33 tests have official accuracy references.",
+    "source_mask_path/source_mask_sha256 are optional and must either both be present or both be omitted (the orientation phantom has no published mask).",
+    "The filter JSON must identify schema/specification/phase/manual version/test ID, bind source_image_sha256, and contain non-empty reviewed parameters; preprocessing JSON must identify the same test and contain non-empty settings.",
+    "Every path is relative to this manifest and is bound to its SHA-256 digest."
+  ],
+  "entries": [
+    {
+      "adapter": "pictologics",
+      "test_id": "1.a.1",
+      "response_map_path": "maps/pictologics/1.a.1.nii.gz",
+      "response_map_sha256": "<64-character-sha256>",
+      "source_image_path": "source/ibsi2/phase1/checkerboard.nii.gz",
+      "source_image_sha256": "<official-source-image-sha256>",
+      "source_mask_path": "source/ibsi2/phase1/checkerboard-mask.nii.gz",
+      "source_mask_sha256": "<official-source-mask-sha256>",
+      "generator_distribution": "pictologics",
+      "generator_version": "0.5.1",
+      "generator_source_revision": "<source-commit-or-build-id>",
+      "generator_source_path": "generator/ibsi2_native_backends.py",
+      "generator_source_sha256": "<64-character-sha256>",
+      "generator_entrypoint": "<fully-qualified-generator-entrypoint>",
+      "generator_command": "<exact-reproducible-command>",
+      "executed_parameters": {
+        "filter": "mean",
+        "dimensionality": 3,
+        "boundary": "zero",
+        "support": 15
+      },
+      "boundary_execution": {
+        "policy": "protocol_explicit",
+        "selected": "zero",
+        "effective": "zero",
+        "implementation": "as_specified"
+      },
+      "native_capability": {
+        "schema_version": "1.0.0",
+        "filter": "mean",
+        "supported_boundaries": ["ZERO", "NEAREST", "PERIODIC", "MIRROR"],
+        "effective_boundary": "as_specified",
+        "input_dimensionality": [3],
+        "kernel_dimensionality": 3,
+        "slice_plane_execution": false,
+        "orthogonal_plane_averaging": false,
+        "structure_tensor_steering": false,
+        "anisotropic_spacing": "not_applicable",
+        "rotation_pooling": []
+      },
+      "filter_config_revision": "<reviewed-filter-config-revision>",
+      "filter_config_path": "configs/ibsi2/phase1/1.a.1.json",
+      "filter_config_sha256": "<64-character-sha256>",
+      "preprocessing_config_path": "configs/ibsi2/phase1/preprocessing.json",
+      "preprocessing_config_sha256": "<64-character-sha256>",
+      "environment_lock_path": "environments/pictologics.lock",
+      "environment_lock_sha256": "<64-character-sha256>"
+    }
+  ]
+}

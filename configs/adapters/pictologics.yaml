@@ -1,0 +1,18 @@
+schema_version: 1
+name: pictologics
+distribution: pictologics
+version: "0.5.1"
+python: "3.12"
+requirement: "pictologics==0.5.1"
+env_dir: ".venvs/adapters/pictologics"
+smoke_imports:
+  - pictologics
+upstream: "https://pypi.org/project/pictologics/0.5.1/"
+verified_latest_stable: "2026-07-29"
+source_commit: "6008e6408fe8de1927389e3511192c4e3792785a"
+notes: "PyPI trusted-publishing release. Wheel SHA-256: b485c4fb909a29475a2a10e72bd09fcc07f2adb78a751ae55470fce5c3a4efb5; sdist SHA-256: 6121f7a8d18634efb5522f2689d96347d08d792ffa63380af0ec0ee00aeae86d."
+environment_locks:
+  Darwin-arm64:
+    path: "reproducibility/environment-locks/darwin-arm64/pictologics.txt"
+    sha256: "d381af94f8f27fdb181b783c079e46ca5718bec4d1a6b8886755b9f2e6bc84d3"
+    freeze_sha256: "635622dae78d6d8dda82ac56b286206ed2f7a3e735522942263bf33f75709712"

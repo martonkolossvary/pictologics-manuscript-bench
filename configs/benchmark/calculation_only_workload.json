@@ -1,0 +1,152 @@
+{
+  "schema_version": 4,
+  "contract_id": "native_partitioned_workloads_3d_merge",
+  "status": "frozen_prebenchmark",
+  "aggregation": "3d_merge",
+  "distance": 1,
+  "input_contract": "manifest_harmonized",
+  "workload_order": ["morphology", "spatial_autocorrelation", "local_intensity", "intensity", "texture", "ivh"],
+  "workloads": {
+    "morphology": {
+      "families": ["morphology"],
+      "feature_partition": "exclude_spatial_autocorrelation",
+      "excluded_ibsi_codes": ["N365", "NPT7"],
+      "representation": "raw"
+    },
+    "spatial_autocorrelation": {
+      "families": ["morphology"],
+      "feature_partition": "spatial_autocorrelation_only",
+      "included_ibsi_codes": ["N365", "NPT7"],
+      "representation": "raw"
+    },
+    "local_intensity": {
+      "families": ["local_intensity"],
+      "feature_partition": "complete",
+      "representation": "raw"
+    },
+    "intensity": {
+      "families": ["intensity"],
+      "feature_partition": "complete",
+      "representation": "raw"
+    },
+    "texture": {
+      "families": ["histogram", "glcm", "glrlm", "glszm", "gldzm", "ngtdm", "ngldm"],
+      "feature_partition": "complete",
+      "representation": "texture_fbn32"
+    },
+    "ivh": {
+      "families": ["ivh"],
+      "feature_partition": "complete",
+      "representation": "precomputed_ivh"
+    }
+  },
+  "timing": {
+    "contract_version": 8,
+    "scope": "prepared_workload_inputs_to_radiomic_calculations",
+    "file_io_included": false,
+    "mask_preparation_included": false,
+    "resegmentation_included": false,
+    "discretization_included": false,
+    "result_normalization_or_serialization_included": false,
+    "matrix_mesh_neighborhood_construction_included": true,
+    "untimed_warmup_calls_per_process": 1,
+    "measured_observations_per_process": 3,
+    "adaptive_calls_per_observation": true,
+    "untimed_steady_state_calibration": true,
+    "multi_window_calibration_convergence": true,
+    "calibration_headroom_factor": 2.0,
+    "calibration_minimum_rounds": 3,
+    "calibration_maximum_rounds": 12,
+    "calibration_cv_threshold": 0.05,
+    "calibration_span_ratio": 1.1,
+    "post_warmup_verification_calls_minimum": 1,
+    "single_call_calibration_accepted_above_headroom": true,
+    "target_observation_window_seconds": 0.05,
+    "measured_window_minimum_enforced": true,
+    "maximum_calls_per_observation": 4096,
+    "reported_samples_are_per_call": true,
+    "within_process_result_equivalence_required": true,
+    "fresh_process_result_equivalence_required": true,
+    "result_equivalence_rtol": 1e-9,
+    "result_equivalence_atol": 1e-12,
+    "fresh_process_repeats": 3,
+    "within_process_primary_statistic": "median",
+    "between_process_primary_statistic": "median",
+    "retain_all_raw_samples": true,
+    "runtime_normalization": "none"
+  },
+  "representations": {
+    "raw": {
+      "families": ["morphology", "local_intensity", "intensity"],
+      "adapter_discretization": "raw"
+    },
+    "texture_fbn32": {
+      "families": ["histogram", "glcm", "glrlm", "glszm", "gldzm", "ngtdm", "ngldm"],
+      "representation_id": "mask_specific_ibsi_fbn32",
+      "adapter_discretization": "identity",
+      "configured_levels": 32
+    },
+    "precomputed_ivh": {
+      "families": ["ivh"],
+      "eligible_modalities": ["ct", "synthetic", "mri", "pet"],
+      "ct_and_synthetic_representation_id": "mask_specific_ibsi_fbs1_ivh_indices",
+      "noncalibrated_representation_id": "mask_specific_ibsi_fbn1000_ivh_indices",
+      "adapter_discretization": "identity",
+      "adapter_rebinning": false
+    }
+  },
+  "adapter_inventories": {
+    "pictologics": {
+      "release_version": "0.5.1",
+      "native_output_count": 174,
+      "ibsi_table2_definition_count": 172,
+      "family_output_counts": {"morphology": 29, "local_intensity": 2, "intensity": 18, "histogram": 23, "ivh": 7, "glcm": 25, "glrlm": 16, "glszm": 16, "gldzm": 16, "ngtdm": 5, "ngldm": 17},
+      "workload_output_counts": {"morphology": 27, "spatial_autocorrelation": 2, "local_intensity": 2, "intensity": 18, "texture": 118, "ivh": 7}
+    },
+    "pyradiomics": {
+      "release_version": "3.1.0",
+      "distribution_metadata_version": "3.0.1a1",
+      "native_output_count": 110,
+      "ibsi_table2_definition_count": 108,
+      "family_output_counts": {"morphology": 17, "local_intensity": 0, "intensity": 16, "histogram": 2, "ivh": 0, "glcm": 24, "glrlm": 16, "glszm": 16, "gldzm": 0, "ngtdm": 5, "ngldm": 14},
+      "workload_output_counts": {"morphology": 17, "spatial_autocorrelation": 0, "local_intensity": 0, "intensity": 16, "texture": 77, "ivh": 0}
+    },
+    "mirp": {
+      "release_version": "2.7.0",
+      "native_output_count": 190,
+      "ibsi_table2_definition_count": 172,
+      "family_output_counts": {"morphology": 32, "local_intensity": 2, "intensity": 22, "histogram": 23, "ivh": 15, "glcm": 26, "glrlm": 16, "glszm": 16, "gldzm": 16, "ngtdm": 5, "ngldm": 17},
+      "workload_output_counts": {"morphology": 30, "spatial_autocorrelation": 2, "local_intensity": 2, "intensity": 22, "texture": 119, "ivh": 15}
+    },
+    "medimage": {
+      "release_version": "0.9.8",
+      "native_output_count": 173,
+      "ibsi_table2_definition_count": 171,
+      "family_output_counts": {"morphology": 29, "local_intensity": 2, "intensity": 18, "histogram": 23, "ivh": 7, "glcm": 25, "glrlm": 16, "glszm": 16, "gldzm": 16, "ngtdm": 5, "ngldm": 16},
+      "workload_output_counts": {"morphology": 27, "spatial_autocorrelation": 2, "local_intensity": 2, "intensity": 18, "texture": 117, "ivh": 7}
+    },
+    "zrad": {
+      "release_version": "26.8.0",
+      "native_output_count": 169,
+      "ibsi_table2_definition_count": 167,
+      "family_output_counts": {"morphology": 25, "local_intensity": 2, "intensity": 18, "histogram": 23, "ivh": 6, "glcm": 25, "glrlm": 16, "glszm": 16, "gldzm": 16, "ngtdm": 5, "ngldm": 17},
+      "workload_output_counts": {"morphology": 23, "spatial_autocorrelation": 2, "local_intensity": 2, "intensity": 18, "texture": 118, "ivh": 6}
+    }
+  },
+  "evidence": {
+    "feature_surface_contract": {
+      "path": "reproducibility/contracts/adapter_feature_surface.csv",
+      "sha256": "97e2459048397aaa234fa0aae48a40f994720b3763417f1bfde563802e1230d5",
+      "contract_id": "adapter_feature_surface_benchmark"
+    }
+  },
+  "interpretation": {
+    "comparison_unit": "same case, grouped workload, stored representation, and process repeat",
+    "reported_workloads": ["morphology", "spatial_autocorrelation", "local_intensity", "intensity", "texture", "ivh"],
+    "post_hoc_runtime_aggregation": "none",
+    "equal_feature_work_claim": false,
+    "per_feature_runtime_valid": false,
+    "coverage_adjusted_runtime_valid": false,
+    "report_runtime_with_native_output_count_and_ibsi_coverage": true
+  }
+}
