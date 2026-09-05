@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import sys
 import unittest
 from unittest import mock
 
 from bench.power_provenance import (
+    _completed,
     combine_power_summaries,
     observe_task_power_state,
     observation_power_tag,
@@ -13,6 +15,18 @@ from bench.power_provenance import (
 
 
 class PowerProvenanceTests(unittest.TestCase):
+    def test_command_output_is_decoded_as_utf8(self) -> None:
+        completed = _completed(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.stdout.buffer.write('Kiegyensúlyozott'.encode())",
+            ]
+        )
+
+        self.assertIsNotNone(completed)
+        self.assertEqual(completed.stdout, "Kiegyensúlyozott")
+
     def test_unavailable_power_mode_is_explicit(self) -> None:
         self.assertEqual(
             observation_power_tag({"host_settings": {}}),
