@@ -87,7 +87,7 @@ The other adapters retain their own native boundaries:
 Each fresh process performs one untimed warmup followed by three measured
 observation windows. Only the first independent post-warmup window may use the
 single-window shortcut when its per-call duration is at least 100 ms. Otherwise
-3–12 untimed calibration windows must converge; a later slow outlier cannot
+3–24 untimed calibration windows must converge; a later slow outlier cannot
 bypass this requirement. The latest three normalized estimates must reach CV
 <= 5% and max/min <= 1.10. The fastest estimate selects 1–4096 calls with 100%
 headroom; every measured window must reach 50 ms. Failure to converge or reach

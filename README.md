@@ -306,7 +306,7 @@ the run. Repeated failures remain visible in the ledger and QC report.
   this shortcut. This prevents JIT compilation in the warmup from hiding a
   much faster steady-state call.
 - If the verified native workload call is shorter than the 100 ms headroom target,
-  3–12 untimed calibration windows must converge: the latest three normalized
+  3–24 untimed calibration windows must converge: the latest three normalized
   call times must have CV at most 5% and max/min at most 1.10. The batch is
   sized from the fastest observed call with 100% headroom. Three measured
   windows then use 1–4096 calls and each must last at least 50 ms; a task that

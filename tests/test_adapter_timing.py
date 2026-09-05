@@ -166,6 +166,49 @@ class AdapterTimingTests(unittest.TestCase):
         for sample in stats["observation_window_samples_sec"]:
             self.assertAlmostEqual(sample, 0.12)
 
+    def test_calibration_can_settle_after_twelve_transient_windows(self) -> None:
+        # Fast Windows calls can be nudged by scheduler noise for more than the
+        # former twelve-window budget. The reviewed CV and span thresholds stay
+        # strict; this only verifies that later convergence is accepted.
+        per_call_durations = (
+            [0.015625]
+            + [duration for index in range(12) for duration in [
+                0.015625 if index % 2 == 0 else 0.01875
+            ] * 8]
+            + [0.015625] * 24
+            + [0.015625] * 24
+        )
+
+        def clock(values):
+            current = 0
+            samples = []
+            for duration in values:
+                samples.extend((current, current + int(duration * 1_000_000_000)))
+                current = samples[-1]
+            return iter(samples)
+
+        wall = clock(per_call_durations)
+        cpu = clock(per_call_durations)
+        with (
+            patch("time.perf_counter_ns", side_effect=lambda: next(wall)),
+            patch("time.process_time_ns", side_effect=lambda: next(cpu)),
+        ):
+            _, stats = run_timed_computation(
+                lambda: "stable",
+                iterations=3,
+                target_observation_window_sec=0.0625,
+            )
+
+        self.assertEqual(
+            stats["calibration_rounds"],
+            15,
+            stats["calibration_per_call_samples_sec"],
+        )
+        self.assertEqual(stats["calibration_maximum_rounds"], 24)
+        self.assertTrue(stats["calibration_stable"])
+        self.assertLessEqual(stats["calibration_stability_cv"], 0.05)
+        self.assertLessEqual(stats["calibration_stability_span"], 1.10)
+
     def test_every_repeated_result_must_have_the_same_feature_names(self) -> None:
         calls = 0
 
@@ -317,7 +360,7 @@ class AdapterTimingTests(unittest.TestCase):
             maximum_calls_per_observation=4096,
             calibration_headroom_factor=2.0,
             calibration_minimum_rounds=3,
-            calibration_maximum_rounds=12,
+            calibration_maximum_rounds=24,
             calibration_cv_threshold=0.05,
             calibration_span_ratio=1.10,
             result_rtol=1e-9,

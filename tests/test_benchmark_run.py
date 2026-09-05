@@ -114,7 +114,7 @@ def contractual_timing(duration: float, measured: int) -> dict:
         "calibration_stability_span": None,
         "calibration_stable": True,
         "calibration_minimum_rounds": 3,
-        "calibration_maximum_rounds": 12,
+        "calibration_maximum_rounds": 24,
         "calibration_cv_threshold": 0.05,
         "calibration_span_ratio": 1.1,
         "calibration_headroom_factor": 2.0,

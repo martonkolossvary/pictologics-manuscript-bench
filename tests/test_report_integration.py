@@ -457,6 +457,46 @@ class ReportIntegrationTests(unittest.TestCase):
         self.assertTrue(metadata["source_attested"])
         self.assertEqual(metadata["run_id"], "ledger-run")
 
+    def test_execution_liveness_reconciles_running_state_with_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_dir = Path(temp_dir)
+            with mock.patch.object(
+                self.report,
+                "_probe_run_lock",
+                return_value="unlocked",
+            ):
+                stale = self.report._execution_liveness(
+                    input_dir,
+                    "running",
+                    {"measured": 7, "running": 1, "pending": 2},
+                )
+            with mock.patch.object(
+                self.report,
+                "_probe_run_lock",
+                return_value="locked",
+            ):
+                active = self.report._execution_liveness(
+                    input_dir,
+                    "running",
+                    {"running": 1},
+                )
+
+        self.assertEqual(stale["state"], "stale")
+        self.assertEqual(stale["run_lock_state"], "unlocked")
+        self.assertEqual(stale["orphaned_running_task_count"], 1)
+        self.assertEqual(active["state"], "active")
+        self.assertEqual(active["orphaned_running_task_count"], 0)
+
+    def test_run_lock_probe_distinguishes_active_and_released_lock(self) -> None:
+        from bench.benchmark_ledger import RunLock
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            lock_path = Path(temp_dir) / ".benchmark.lock"
+            self.assertEqual(self.report._probe_run_lock(lock_path), "absent")
+            with RunLock(lock_path):
+                self.assertEqual(self.report._probe_run_lock(lock_path), "locked")
+            self.assertEqual(self.report._probe_run_lock(lock_path), "unlocked")
+
     def test_ledger_run_spec_dataset_kind_is_not_overwritten_by_row_inference(
         self,
     ) -> None:
@@ -847,6 +887,9 @@ class ReportIntegrationTests(unittest.TestCase):
                 metadata={
                     "dataset_kind": "synthetic",
                     "run_status": "interrupted",
+                    "execution_liveness": "stale",
+                    "run_lock_state": "unlocked",
+                    "orphaned_running_task_count": 1,
                     "execution_complete": False,
                     "task_count": 10,
                     "unfinished_task_count": 3,
@@ -866,8 +909,10 @@ class ReportIntegrationTests(unittest.TestCase):
             text = path.read_text(encoding="utf-8")
 
         self.assertIn("Run status: `interrupted`", text)
+        self.assertIn("Execution liveness: `stale`", text)
         self.assertIn("Execution complete: no", text)
         self.assertIn("| interrupted | 3 |", text)
+        self.assertIn("Stale running state", text)
         self.assertIn("explicitly partial snapshot", text)
 
     def test_feature_workload_contract_keeps_counts_without_normalizing(self) -> None:

@@ -85,7 +85,7 @@ def load_benchmark_contract(path: str | Path | None = None) -> BenchmarkContract
         raise ValueError("invalid spatial-autocorrelation feature partition")
     timing = payload.get("timing")
     if not isinstance(timing, dict) or timing != {
-        "contract_version": 8,
+        "contract_version": 9,
         "scope": "prepared_workload_inputs_to_radiomic_calculations",
         "file_io_included": False,
         "mask_preparation_included": False,
@@ -100,7 +100,7 @@ def load_benchmark_contract(path: str | Path | None = None) -> BenchmarkContract
         "multi_window_calibration_convergence": True,
         "calibration_headroom_factor": 2.0,
         "calibration_minimum_rounds": 3,
-        "calibration_maximum_rounds": 12,
+        "calibration_maximum_rounds": 24,
         "calibration_cv_threshold": 0.05,
         "calibration_span_ratio": 1.1,
         "post_warmup_verification_calls_minimum": 1,

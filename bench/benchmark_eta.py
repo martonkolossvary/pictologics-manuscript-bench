@@ -19,6 +19,14 @@ from bench.benchmark_models import STATUS_MEASURED, STATUS_TIMED_OUT, TERMINAL_S
 # implementation and would amplify sparse early observations unrealistically.
 MAX_VOXEL_EXPONENT = 2.0
 
+# Multiple masks from one image size can differ slightly in ROI voxels while
+# sharing essentially the same full-task process overhead. Treating that narrow
+# range as a scaling experiment makes scheduler noise look like a growth curve
+# and can produce extreme early-run extrapolations. Two-fold coverage is the
+# minimum reviewed span for fitting a voxel power model; otherwise the estimator
+# falls back to observed turnaround medians until a genuinely larger case lands.
+MIN_POWER_MODEL_VOXEL_SPAN_RATIO = 2.0
+
 
 @dataclass(frozen=True)
 class EtaEstimate:
@@ -38,9 +46,21 @@ class EtaEstimate:
     @property
     def basis(self) -> str:
         basis = (
-            "empirical full-task turnaround scaled by ROI voxels from "
+            "empirical full-task turnaround from "
             f"{self.observed_task_count} measured tasks"
         )
+        prediction_mix = [
+            ("exact-repeat", self.exact_repeat_predictions),
+            ("scoped voxel-scaled", self.scoped_scaling_predictions),
+            (
+                "adapter/workload voxel-scaled",
+                self.adapter_workload_scaling_predictions,
+            ),
+            ("median-fallback", self.fallback_predictions),
+        ]
+        used = [f"{count} {label}" for label, count in prediction_mix if count]
+        if used:
+            basis += "; predictions: " + ", ".join(used)
         if self.timeout_capped_predictions:
             basis += (
                 f"; {self.timeout_capped_predictions} extrapolations capped at "
@@ -165,6 +185,8 @@ def _fit_power_model(
         for value, samples in by_voxels.items()
     )
     if len(points) < 2:
+        return None
+    if points[-1][0] / points[0][0] < MIN_POWER_MODEL_VOXEL_SPAN_RATIO:
         return None
 
     log_points = [(math.log(value), math.log(seconds)) for value, seconds in points]

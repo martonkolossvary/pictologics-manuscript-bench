@@ -112,6 +112,43 @@ def test_eta_prefers_same_case_from_an_earlier_fresh_process_repeat() -> None:
     assert estimate.scoped_scaling_predictions == 0
 
 
+def test_eta_does_not_extrapolate_from_near_identical_roi_sizes() -> None:
+    rows = [
+        _row(
+            ordinal=1,
+            case_id="same-image-mask-a",
+            voxels=1_000,
+            status="measured",
+            started=10.0,
+            finished=11.0,
+        ),
+        _row(
+            ordinal=2,
+            case_id="same-image-mask-b",
+            voxels=1_100,
+            status="measured",
+            started=20.0,
+            finished=28.0,
+        ),
+        _row(
+            ordinal=3,
+            case_id="future-large-image",
+            voxels=1_000_000,
+            status="pending",
+        ),
+    ]
+
+    estimate = estimate_pending_turnaround(rows)
+
+    assert estimate is not None
+    assert estimate.seconds == pytest.approx(4.5)
+    assert estimate.scoped_scaling_predictions == 0
+    assert estimate.adapter_workload_scaling_predictions == 0
+    assert estimate.fallback_predictions == 1
+    assert "1 median-fallback" in estimate.basis
+    assert "voxel-scaled" not in estimate.basis
+
+
 def test_eta_subtracts_elapsed_time_for_the_active_task() -> None:
     rows = [
         _row(

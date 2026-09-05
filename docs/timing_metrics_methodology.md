@@ -6,7 +6,7 @@ A measured task is one adapter, case, grouped native workload, stored
 representation, and fresh-process repeat. The adapter performs one warmup and
 three measured observation windows. Only the first independent post-warmup
 window may take the long-call shortcut when its per-call duration is at least
-100 ms. Otherwise calibration uses 3–12 untimed windows; a later slow outlier
+100 ms. Otherwise calibration uses 3–24 untimed windows; a later slow outlier
 cannot bypass convergence. Calibration converges only when the latest three
 per-call estimates have CV at most 5% and max/min at most 1.10.
 The measured batch is sized from the fastest calibration estimate with 100%
@@ -46,6 +46,9 @@ preferred reference. Otherwise, the controller fits a robust power law within
 the same adapter, native workload, and synthetic scaling series, using ROI
 voxel count (or total image voxels when ROI count is unavailable). A broader
 adapter/workload fit and finally observed turnaround medians are fallbacks.
+Voxel scaling is fitted only after observations span at least a two-fold range;
+near-identical masks from one image size otherwise turn scheduler noise into an
+unstable early-run growth estimate.
 With three or more observed size levels, the fit includes a non-negative fixed
 turnaround term so process startup/import overhead is not incorrectly scaled
 with voxel count.

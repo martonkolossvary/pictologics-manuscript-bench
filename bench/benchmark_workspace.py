@@ -115,7 +115,7 @@ def _task_inventory(
         "multi_window_calibration_convergence": True,
         "calibration_headroom_factor": 2.0,
         "calibration_minimum_rounds": 3,
-        "calibration_maximum_rounds": 12,
+        "calibration_maximum_rounds": 24,
         "within_process_result_equivalence_required": True,
         "fresh_process_result_equivalence_required": True,
         "untimed_warmup_calls_per_process": warmups,

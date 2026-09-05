@@ -7,6 +7,7 @@ from importlib import metadata as importlib_metadata
 from io import BytesIO
 import json
 import math
+import os
 from pathlib import Path
 import platform
 import re
@@ -374,6 +375,79 @@ def _resolve_dataset_kind(df: pd.DataFrame, explicit: str | None = None) -> str:
     return "unknown"
 
 
+def _probe_run_lock(path: Path) -> str:
+    """Return whether the persistent benchmark lock is currently held.
+
+    RunLock deliberately keeps its owner file after release, so file presence
+    alone cannot distinguish a live controller from an abandoned run. Probe the
+    same locked byte without changing the owner record.
+    """
+
+    if not path.is_file():
+        return "absent"
+    try:
+        stream = path.open("r+b")
+    except OSError:
+        return "unknown"
+    try:
+        stream.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            try:
+                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError:
+                return "locked"
+            try:
+                return "unlocked"
+            finally:
+                stream.seek(0)
+                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+
+        import fcntl
+
+        try:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return "locked"
+        except OSError:
+            return "unknown"
+        try:
+            return "unlocked"
+        finally:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+    finally:
+        stream.close()
+
+
+def _execution_liveness(
+    input_dir: Path,
+    run_status: str | None,
+    status_counts: Mapping[str, int],
+) -> Dict[str, Any]:
+    """Reconcile running ledger state with the controller's advisory lock."""
+
+    running_tasks = int(status_counts.get("running") or 0)
+    if run_status != "running" and running_tasks == 0:
+        return {
+            "state": "not_applicable",
+            "run_lock_state": "not_checked",
+            "orphaned_running_task_count": 0,
+        }
+    lock_state = _probe_run_lock(input_dir / ".benchmark.lock")
+    if lock_state == "locked":
+        state = "active"
+    elif lock_state in {"absent", "unlocked"}:
+        state = "stale"
+    else:
+        state = "unknown"
+    return {
+        "state": state,
+        "run_lock_state": lock_state,
+        "orphaned_running_task_count": running_tasks if state == "stale" else 0,
+    }
+
+
 def _ledger_record_loader(
     input_dir: Path,
 ) -> tuple[pd.DataFrame, Mapping[str, Any]]:
@@ -418,6 +492,7 @@ def _ledger_record_loader(
     execution_complete = (
         run_status in {"completed", "completed_with_failures"} and unfinished_n == 0
     )
+    liveness = _execution_liveness(input_dir, run_status, status_counts)
     return pd.DataFrame(records), {
         "record_source": "benchmark.sqlite3",
         "source_attested": True,
@@ -429,6 +504,11 @@ def _ledger_record_loader(
         "unfinished_task_count": unfinished_n,
         "run_status": run_status or "unknown",
         "execution_complete": execution_complete,
+        "execution_liveness": liveness["state"],
+        "run_lock_state": liveness["run_lock_state"],
+        "orphaned_running_task_count": liveness[
+            "orphaned_running_task_count"
+        ],
         "run_fingerprint": run_fingerprint,
         "run_spec": run_spec,
     }
@@ -1509,6 +1589,15 @@ def generate_excel_report(
         {"field": "run_id", "value": run_metadata.get("run_id")},
         {"field": "run_status", "value": run_metadata.get("run_status")},
         {
+            "field": "execution_liveness",
+            "value": run_metadata.get("execution_liveness"),
+        },
+        {"field": "run_lock_state", "value": run_metadata.get("run_lock_state")},
+        {
+            "field": "orphaned_running_task_count",
+            "value": run_metadata.get("orphaned_running_task_count"),
+        },
+        {
             "field": "execution_complete",
             "value": bool(run_metadata.get("execution_complete")),
         },
@@ -1879,6 +1968,8 @@ def _write_markdown_summary(
         f"- Run: `{run_id}`",
         f"- Dataset kind: `{kind}`",
         f"- Run status: `{metadata.get('run_status', 'unknown')}`",
+        f"- Execution liveness: "
+        f"`{metadata.get('execution_liveness', 'unknown')}`",
         f"- Execution complete: "
         f"{'yes' if metadata.get('execution_complete') else 'no'}",
         f"- Planned tasks: {metadata.get('task_count', 'unknown')}",
@@ -1915,6 +2006,15 @@ def _write_markdown_summary(
         for status, count in sorted(status_counts.items()):
             lines.append(f"| {status} | {count} |")
         lines.append("")
+    if metadata.get("execution_liveness") == "stale":
+        lines.extend(
+            [
+                "> **Stale running state:** the ledger retains running state, "
+                "but no controller holds the benchmark lock. Any orphaned "
+                "running task will be recovered as interrupted on resume.",
+                "",
+            ]
+        )
     if not metadata.get("execution_complete"):
         lines.extend(
             [
@@ -2212,6 +2312,11 @@ def _write_report_manifest(
         "run_fingerprint": metadata.get("run_fingerprint"),
         "report_generator": dict(metadata.get("report_generator") or {}),
         "run_status": metadata.get("run_status"),
+        "execution_liveness": metadata.get("execution_liveness"),
+        "run_lock_state": metadata.get("run_lock_state"),
+        "orphaned_running_task_count": metadata.get(
+            "orphaned_running_task_count"
+        ),
         "execution_complete": bool(metadata.get("execution_complete")),
         "source_attested": bool(metadata.get("source_attested")),
         "publication_attested": _publication_attested(metadata),
