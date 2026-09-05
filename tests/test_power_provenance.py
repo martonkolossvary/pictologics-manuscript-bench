@@ -6,6 +6,7 @@ from unittest import mock
 
 from bench.power_provenance import (
     _completed,
+    _decode_command_output,
     combine_power_summaries,
     observe_task_power_state,
     observation_power_tag,
@@ -15,6 +16,16 @@ from bench.power_provenance import (
 
 
 class PowerProvenanceTests(unittest.TestCase):
+    def test_command_output_falls_back_to_windows_oem_encoding(self) -> None:
+        encoded = "Kiegyensúlyozott".encode("cp852")
+        with mock.patch(
+            "bench.power_provenance._command_output_encodings",
+            return_value=("utf-8", "cp852"),
+        ):
+            decoded = _decode_command_output(encoded)
+
+        self.assertEqual(decoded, "Kiegyensúlyozott")
+
     def test_command_output_is_decoded_as_utf8(self) -> None:
         completed = _completed(
             [

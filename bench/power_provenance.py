@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 import ctypes
+import os
 from pathlib import Path
 import platform
 import re
@@ -42,18 +43,46 @@ def observation_power_tag(observation: Mapping[str, Any]) -> str:
     return "power-mode-unavailable"
 
 
+def _command_output_encodings() -> tuple[str, ...]:
+    encodings = ["utf-8"]
+    if os.name == "nt":
+        try:
+            oem_code_page = int(ctypes.windll.kernel32.GetOEMCP())
+        except (AttributeError, OSError, TypeError, ValueError):
+            oem_code_page = 0
+        if oem_code_page:
+            encodings.append(f"cp{oem_code_page}")
+        encodings.append("mbcs")
+    return tuple(dict.fromkeys(encodings))
+
+
+def _decode_command_output(value: bytes | None) -> str:
+    if not value:
+        return ""
+    for encoding in _command_output_encodings():
+        try:
+            return value.decode(encoding)
+        except (LookupError, UnicodeDecodeError):
+            continue
+    return value.decode("utf-8", errors="replace")
+
+
 def _completed(command: list[str]) -> subprocess.CompletedProcess[str] | None:
     try:
-        return subprocess.run(
+        completed = subprocess.run(
             command,
             capture_output=True,
-            encoding="utf-8",
-            errors="replace",
             check=False,
             timeout=5,
         )
     except (OSError, subprocess.SubprocessError):
         return None
+    return subprocess.CompletedProcess(
+        completed.args,
+        completed.returncode,
+        stdout=_decode_command_output(completed.stdout),
+        stderr=_decode_command_output(completed.stderr),
+    )
 
 
 def _darwin_task_power_state() -> dict[str, Any]:
