@@ -147,7 +147,7 @@ def _self_peak_rss_bytes() -> int | None:
         return None
     # Darwin reports bytes; Linux and the BSDs exposed by our supported CI
     # images report KiB.  The controller still performs process-tree polling;
-    # this worker value makes short-lived event boundaries race-free.
+    # this worker value preserves lifetime peaks only, never phase/current RSS.
     return value if sys.platform == "darwin" else value * 1024
 
 

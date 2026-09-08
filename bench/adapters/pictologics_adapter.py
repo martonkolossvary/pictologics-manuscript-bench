@@ -608,6 +608,22 @@ def _prepare_calculation_only(
     return calculate, finalize
 
 
+def _calculation_preparer(families):
+    if "local_intensity" not in families:
+        return None
+    from pictologics.features.intensity import _sphere_offsets_for_radius
+
+    # Resolve the pinned native hook before timing; fail closed if it changes.
+    clear = _sphere_offsets_for_radius.cache_clear
+
+    def prepare():
+        # Geometry construction belongs inside each native calculation. Clearing
+        # outside the clock includes reconstruction without timing invalidation.
+        clear()
+
+    return prepare
+
+
 def main(argv: List[str] | None = None) -> int:
     import argparse
 
@@ -682,9 +698,11 @@ def main(argv: List[str] | None = None) -> int:
             feature_modules=feature_modules,
             benchmark_workload=benchmark_workload,
         )
+        prepare_fn = _calculation_preparer(families)
         features, timing = run_adapter_timing(
-            compute_fn,
+            (lambda _state: compute_fn()) if prepare_fn else compute_fn,
             iterations=args.iterations,
+            prepare_fn=prepare_fn,
             finalize_fn=finalize_fn,
         )
     else:

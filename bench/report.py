@@ -72,6 +72,8 @@ PUBLIC_TASK_COLUMNS = (
     "maximum_calls_per_observation", "observation_window_samples_sec",
     "cpu_observation_window_samples_sec",
     "peak_rss_bytes", "host_peak_rss_bytes", "worker_ready_rss_bytes",
+    "worker_lifetime_peak_rss_bytes", "calculation_rss_poll_count",
+    "calculation_windows_with_rss_poll", "host_process_scope", "phase_rss_method",
     "calculation_peak_rss_bytes", "incremental_calculation_peak_rss_bytes",
     "host_wall_time_sec", "adapter_event_count",
     "host_session_index", "host_session_observed_at_utc",
@@ -86,7 +88,7 @@ PUBLIC_TASK_COLUMNS = (
     "host_power_probe_diagnostics",
     "memory_phase_observation_status", "timing_source", "timing_scope",
     "memory_scope", "feature_count", "attempted_feature_count",
-    "finite_feature_count", "censor_lower_bound_sec",
+    "finite_feature_count", "censor_lower_bound_sec", "timeout_phase", "censor_bound_scope",
     "partial_duration_samples_sec", "partial_cpu_time_samples_sec",
     "partial_completed_iterations", "policy_reason", "memory_preflight_policy_id",
     "timeout_cutoff_complexity", "timeout_cutoff_complexity_metric",
@@ -1901,7 +1903,7 @@ def _diagnostic_table(outcomes: pd.DataFrame) -> pd.DataFrame:
                 "size",
                 "mask_id",
                 "reason",
-                "censor_lower_bound_sec",
+                "censor_lower_bound_sec", "timeout_phase", "censor_bound_scope",
             ]
         )
 
@@ -1917,7 +1919,7 @@ def _diagnostic_table(outcomes: pd.DataFrame) -> pd.DataFrame:
         "image_voxels",
         "size",
         "mask_id",
-        "censor_lower_bound_sec",
+        "censor_lower_bound_sec", "timeout_phase", "censor_bound_scope",
     ):
         result[column] = outcomes[column] if column in outcomes.columns else np.nan
     result["workload"] = outcomes["_report_workload"]
@@ -1941,7 +1943,7 @@ def _diagnostic_table(outcomes: pd.DataFrame) -> pd.DataFrame:
             "size",
             "mask_id",
             "reason",
-            "censor_lower_bound_sec",
+            "censor_lower_bound_sec", "timeout_phase", "censor_bound_scope",
         ]
     ]
 

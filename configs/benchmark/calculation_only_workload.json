@@ -41,7 +41,7 @@
     }
   },
   "timing": {
-    "contract_version": 9,
+    "contract_version": 10,
     "scope": "prepared_workload_inputs_to_radiomic_calculations",
     "file_io_included": false,
     "mask_preparation_included": false,

@@ -10,6 +10,11 @@ if ! command -v poetry >/dev/null 2>&1; then
     exit 1
 fi
 
+if ! command -v uv >/dev/null 2>&1 || [[ ! "$(uv --version)" =~ ^uv\ 0\.8\.[0-9]+($|\ ) ]]; then
+    echo "uv >=0.8,<0.9 is required for the pinned MEDimage wheel on every platform." >&2
+    exit 1
+fi
+
 poetry sync
 # Existing valid environments are verified and reused. Rebuilding requires the
 # user's explicit `bench env create --force` command.

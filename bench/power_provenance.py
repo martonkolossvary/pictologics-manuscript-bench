@@ -113,7 +113,7 @@ def _darwin_task_power_state() -> dict[str, Any]:
     low_power_mode = None
     probe_source = None
     probe_attempts = 0
-    active_heading = "AC Power" if power_source == "AC Power" else "Battery Power"
+    active_heading = power_source or "Unknown Power Source"
     for attempt in range(TASK_POWER_MODE_ATTEMPTS):
         probe_attempts = attempt + 1
         completed = _completed(["/usr/bin/pmset", "-g", "custom"])
@@ -123,9 +123,9 @@ def _darwin_task_power_state() -> dict[str, Any]:
         if completed is not None and completed.returncode == 0:
             content = completed.stdout or ""
             block = re.search(
-                rf"(?:^|\n){re.escape(active_heading)}:\s*(.*?)(?=\n\S[^\n]*:\s*$|\Z)",
+                rf"^{re.escape(active_heading)}:[^\S\n]*\n?(.*?)(?=^\S[^\n]*:[^\S\n]*$|\Z)",
                 content,
-                flags=re.DOTALL,
+                flags=re.DOTALL | re.MULTILINE,
             )
             active_content = block.group(1) if block else ""
             diagnostics["custom_active_profile_found"].append(block is not None)
@@ -147,7 +147,7 @@ def _darwin_task_power_state() -> dict[str, Any]:
             # Some macOS releases emit a single profile without a heading.
             # It is safe to use only when the output contains one unambiguous
             # low-power-mode value.
-            if match is None:
+            if match is None and not re.search(r"(?m)^\S[^\n]*:\s*$", content):
                 values = re.findall(
                     r"^\s*lowpowermode\s+(\d+)\s*$",
                     content,

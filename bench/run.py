@@ -15,7 +15,7 @@ import subprocess
 import tempfile
 import threading
 import time
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from functools import lru_cache
 from numbers import Real
 from importlib import metadata as importlib_metadata
@@ -23,6 +23,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import psutil
+
+from bench.process_tree import ProcessTree
 
 from bench.adapters.base import (
     ResultEquivalenceError,
@@ -144,6 +146,7 @@ BENCHMARK_INITIALIZATION_POLICY = {
     "mirp_feature_objects_and_result_table": "outside_measured_region",
     "medimage_intensity_type": MEDIMAGE_BENCHMARK_INTENSITY_TYPE,
     "zrad_local_intensity_cache": "cleared_before_and_after_each_calculation",
+    "pictologics_local_neighbourhood_cache": "cleared_before_every_native_calculation",
     "environment": BENCHMARK_INITIALIZATION_ENV,
 }
 
@@ -560,6 +563,10 @@ class AdapterTimeout(TimeoutError):
         self.elapsed_seconds = elapsed_seconds
         self.pid = pid
         self.phase = phase
+        self.censor_bound_scope = phase + "_elapsed_wall_time"
+        self.host_metrics: Dict[str, Any] = {}
+        self.stdout = ""
+        self.stderr = ""
         self.partial_duration_samples_sec = tuple(partial_duration_samples_sec)
         self.partial_cpu_time_samples_sec = tuple(partial_cpu_time_samples_sec)
 
@@ -575,6 +582,10 @@ class AdapterInterrupted(InterruptedError):
         partial_cpu_time_samples_sec: Sequence[float] = (),
     ):
         super().__init__(f"Adapter {adapter} was interrupted")
+        self.censor_bound_scope = "whole_task_elapsed_wall_time"
+        self.host_metrics: Dict[str, Any] = {}
+        self.stdout = ""
+        self.stderr = ""
         self.adapter = adapter
         self.elapsed_seconds = elapsed_seconds
         self.pid = pid
@@ -586,78 +597,27 @@ class UnsupportedTaskError(RuntimeError):
     pass
 
 
-def _terminate_process_tree(
-    process: subprocess.Popen, grace_seconds: float = 3.0
-) -> None:
-    """Terminate an adapter's entire isolated process group and reap its parent."""
-    if process.poll() is not None:
-        try:
-            process.wait(timeout=0)
-        except Exception:
-            pass
-        return
+class _OutputTail:
+    """Bound pipe retention even when a broken worker logs indefinitely."""
 
-    try:
-        ps_process = psutil.Process(process.pid)
-        descendants = ps_process.children(recursive=True)
-    except (psutil.Error, OSError):
-        ps_process = None
-        descendants = []
+    def __init__(self, limit):
+        self.limit = limit
+        self.parts = deque()
+        self.size = 0
 
-    signalled_group = False
-    if os.name != "nt":
-        try:
-            process_group = os.getpgid(process.pid)
-            if process_group != os.getpgrp():
-                os.killpg(process_group, signal.SIGTERM)
-                signalled_group = True
-        except (ProcessLookupError, PermissionError, OSError):
-            pass
+    def append(self, text):
+        self.parts.append(text[-self.limit:])
+        self.size += len(self.parts[-1])
+        while self.size > self.limit:
+            first = self.parts.popleft()
+            excess = self.size - self.limit
+            self.size -= len(first)
+            if len(first) > excess:
+                self.parts.appendleft(first[excess:])
+                self.size += len(first) - excess
 
-    if not signalled_group:
-        for child in reversed(descendants):
-            try:
-                child.terminate()
-            except (psutil.Error, OSError):
-                pass
-        try:
-            process.terminate()
-        except (ProcessLookupError, OSError):
-            pass
-
-    try:
-        process.wait(timeout=max(0.0, grace_seconds))
-    except subprocess.TimeoutExpired:
-        if signalled_group and os.name != "nt":
-            try:
-                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-            except (ProcessLookupError, PermissionError, OSError):
-                pass
-        for child in reversed(descendants):
-            try:
-                child.kill()
-            except (psutil.Error, OSError):
-                pass
-        try:
-            process.kill()
-        except (ProcessLookupError, OSError):
-            pass
-        try:
-            process.wait(timeout=max(1.0, grace_seconds))
-        except (subprocess.TimeoutExpired, ChildProcessError):
-            pass
-
-    if ps_process is not None:
-        try:
-            remaining = [child for child in descendants if child.is_running()]
-            _, alive = psutil.wait_procs(remaining, timeout=max(0.0, grace_seconds))
-            for child in alive:
-                try:
-                    child.kill()
-                except (psutil.Error, OSError):
-                    pass
-        except (psutil.Error, OSError):
-            pass
+    def __iter__(self):
+        return iter(self.parts)
 
 
 def _run_process_command(
@@ -672,27 +632,19 @@ def _run_process_command(
     progress_callback: Optional[Callable[[Mapping[str, Any]], None]] = None,
     progress_interval: float = 30.0,
 ) -> Tuple[str, str, Dict[str, Any]]:
-    creation_flags = 0
-    popen_kwargs: Dict[str, Any] = {"start_new_session": True}
-    if os.name == "nt":
-        creation_flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-        popen_kwargs = {"creationflags": creation_flags}
-
     started = time.perf_counter()
-    process = subprocess.Popen(
-        list(command),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env=dict(environment) if environment is not None else None,
-        **popen_kwargs,
-    )
+    tree = ProcessTree(command, environment=environment)
+    process = tree.process
     try:
         ps_process = psutil.Process(process.pid)
     except psutil.Error:
         ps_process = None
 
     peak_rss = 0
+    worker_lifetime_peak_rss = 0
+    calculation_poll_count = 0
+    calculation_windows_observed = 0
+    current_window_poll_count = 0
     calculation_peak_rss = 0
     worker_ready_rss = None
     event_count = 0
@@ -703,8 +655,10 @@ def _run_process_command(
     completed_iterations = 0
     partial_duration_samples: List[float] = []
     partial_cpu_time_samples: List[float] = []
-    stdout_lines: List[str] = []
-    stderr_lines: List[str] = []
+    # The final JSON occupies the end of stdout. Oversized/truncated payloads
+    # fail parsing rather than allowing an unbounded log to exhaust the host.
+    stdout_lines = _OutputTail(8 * 1024 * 1024)
+    stderr_lines = _OutputTail(65536)
     state_lock = threading.Lock()
 
     def sample_rss() -> int:
@@ -714,7 +668,8 @@ def _run_process_command(
         nonlocal calculation_peak_rss, event_count, in_calculation, peak_rss
         nonlocal worker_ready_rss
         nonlocal worker_ready_at, calculation_started_at, current_iteration
-        nonlocal completed_iterations
+        nonlocal completed_iterations, worker_lifetime_peak_rss
+        nonlocal calculation_windows_observed, current_window_poll_count
         assert process.stdout is not None
         for line in process.stdout:
             stdout_lines.append(line)
@@ -729,12 +684,11 @@ def _run_process_command(
                 continue
             controller_rss = sample_rss()
             worker_rss = _safe_int(event.get("worker_self_peak_rss_bytes")) or 0
-            rss = max(controller_rss, worker_rss)
+            rss = controller_rss
             with state_lock:
-                # Event-boundary samples can observe a short-lived RSS peak
-                # that the controller's periodic polling thread misses. Keep
-                # the overall peak consistent with every accepted sample.
-                peak_rss = max(peak_rss, rss)
+                # ru_maxrss is a lifetime high-water mark, never a phase sample.
+                worker_lifetime_peak_rss = max(worker_lifetime_peak_rss, worker_rss)
+                peak_rss = max(peak_rss, rss, worker_rss)
                 event_count += 1
                 event_name = str(event.get("event") or "")
                 if event_name == "worker_ready":
@@ -742,12 +696,14 @@ def _run_process_command(
                     worker_ready_at = time.perf_counter()
                 elif event_name == "calculation_start":
                     in_calculation = True
+                    current_window_poll_count = 0
                     calculation_started_at = time.perf_counter()
                     current_iteration = int(event.get("iteration") or 0) or None
                     calculation_peak_rss = max(calculation_peak_rss, rss)
                 elif event_name == "calculation_complete":
                     calculation_peak_rss = max(calculation_peak_rss, rss)
                     in_calculation = False
+                    calculation_windows_observed += int(current_window_poll_count > 0)
                     completed_iterations = max(
                         completed_iterations, int(event.get("iteration") or 0)
                     )
@@ -765,7 +721,42 @@ def _run_process_command(
 
     def read_stderr() -> None:
         assert process.stderr is not None
-        stderr_lines.extend(process.stderr)
+        for line in process.stderr:
+            stderr_lines.append(line)
+
+    def snapshot_host_metrics():
+        elapsed = time.perf_counter() - started
+        phase_observation_status = (
+            "complete"
+            if worker_ready_rss and calculation_peak_rss
+            and calculation_windows_observed > 0
+            and calculation_windows_observed == completed_iterations
+            and not in_calculation
+            else "partial"
+            if worker_ready_rss or calculation_peak_rss
+            else "unavailable"
+        )
+        host_metrics = {
+            "host_wall_time_sec": elapsed,
+            "host_peak_rss_bytes": peak_rss,
+            "worker_lifetime_peak_rss_bytes": worker_lifetime_peak_rss or None,
+            "calculation_rss_poll_count": calculation_poll_count,
+            "calculation_windows_with_rss_poll": calculation_windows_observed,
+            "host_process_scope": "supervisor_and_adapter_process_tree",
+            "phase_rss_method": "current_process_tree_rss_sampled_at_events_and_periodically",
+            "worker_ready_rss_bytes": worker_ready_rss,
+            "calculation_peak_rss_bytes": calculation_peak_rss or None,
+            "incremental_calculation_peak_rss_bytes": (
+                max(0, calculation_peak_rss - worker_ready_rss)
+                if phase_observation_status == "complete"
+                else None
+            ),
+            "host_cpu_time_sec": last_cpu,
+            "adapter_event_count": event_count,
+            "adapter_stderr": "".join(stderr_lines)[-65536:],
+            "memory_phase_observation_status": phase_observation_status,
+        }
+        return host_metrics
 
     stdout_thread = threading.Thread(target=read_stdout, daemon=True)
     stderr_thread = threading.Thread(target=read_stderr, daemon=True)
@@ -773,6 +764,14 @@ def _run_process_command(
     stderr_thread.start()
     last_cpu = None
     last_progress = started
+
+    def close_tree():
+        try:
+            tree.close(termination_grace)
+        except Exception as exc:
+            # Never let --keep-going launch another task after uncertain cleanup.
+            raise RunIntegrityError("Adapter process-tree cleanup could not be verified") from exc
+
     try:
         while process.poll() is None:
             if ps_process is not None:
@@ -781,6 +780,9 @@ def _run_process_command(
                     peak_rss = max(peak_rss, sampled_rss)
                     if in_calculation:
                         calculation_peak_rss = max(calculation_peak_rss, sampled_rss)
+                        if sampled_rss > 0:
+                            calculation_poll_count += 1
+                            current_window_poll_count += 1
                 sampled_cpu = _safe_cpu_time(ps_process)
                 if sampled_cpu is not None:
                     last_cpu = sampled_cpu
@@ -858,52 +860,34 @@ def _run_process_command(
             time.sleep(max(0.001, sample_interval))
 
         process.wait()
-        stdout_thread.join(timeout=1.0)
-        stderr_thread.join(timeout=1.0)
+        close_tree()
+        stdout_thread.join(timeout=3.0)
+        stderr_thread.join(timeout=3.0)
         stdout = "".join(stdout_lines)
         stderr = "".join(stderr_lines)
-    except KeyboardInterrupt as exc:
-        elapsed = time.perf_counter() - started
-        _terminate_process_tree(process, termination_grace)
-        stdout_thread.join(timeout=0.2)
-        stderr_thread.join(timeout=0.2)
-        partial_wall, partial_cpu = partial_samples()
-        raise AdapterInterrupted(
-            adapter_name,
-            elapsed,
-            process.pid,
-            partial_duration_samples_sec=partial_wall,
-            partial_cpu_time_samples_sec=partial_cpu,
-        ) from exc
-    except BaseException:
-        _terminate_process_tree(process, termination_grace)
-        stdout_thread.join(timeout=0.2)
-        stderr_thread.join(timeout=0.2)
-        raise
+    except BaseException as exc:
+        close_tree()
+        stdout_thread.join(timeout=3.0)
+        stderr_thread.join(timeout=3.0)
+        if isinstance(exc, KeyboardInterrupt):
+            partial_wall, partial_cpu = partial_samples()
+            exc = AdapterInterrupted(
+                adapter_name, time.perf_counter() - started, process.pid,
+                partial_duration_samples_sec=partial_wall,
+                partial_cpu_time_samples_sec=partial_cpu,
+            )
+        if isinstance(exc, (AdapterTimeout, AdapterInterrupted)):
+            exc.host_metrics = snapshot_host_metrics()
+            exc.stdout = "".join(stdout_lines)[-65536:]
+            exc.stderr = "".join(stderr_lines)[-65536:]
+            exc.partial_duration_samples_sec, exc.partial_cpu_time_samples_sec = partial_samples()
+        raise exc
+    finally:
+        close_tree()
+        process.stdout.close()
+        process.stderr.close()
 
-    elapsed = time.perf_counter() - started
-    phase_observation_status = (
-        "complete"
-        if worker_ready_rss and calculation_peak_rss
-        else "partial"
-        if worker_ready_rss or calculation_peak_rss
-        else "unavailable"
-    )
-    host_metrics = {
-        "host_wall_time_sec": elapsed,
-        "host_peak_rss_bytes": peak_rss,
-        "worker_ready_rss_bytes": worker_ready_rss,
-        "calculation_peak_rss_bytes": calculation_peak_rss or None,
-        "incremental_calculation_peak_rss_bytes": (
-            max(0, calculation_peak_rss - worker_ready_rss)
-            if worker_ready_rss is not None and calculation_peak_rss > 0
-            else None
-        ),
-        "host_cpu_time_sec": last_cpu,
-        "adapter_event_count": event_count,
-        "adapter_stderr": stderr,
-        "memory_phase_observation_status": phase_observation_status,
-    }
+    host_metrics = snapshot_host_metrics()
     if process.returncode != 0:
         raise AdapterProcessError(
             f"Adapter {adapter_name} failed with code {process.returncode}: {stderr}\n{stdout}",
@@ -1187,9 +1171,14 @@ def run_adapter_process(
         if timed
         else "not_applicable",
         "memory_scope": (
-            "host_process_tree_polling_with_worker_reported_event_peak_fallback"
+            "host_process_tree_polling_with_separate_worker_lifetime_peak"
         ),
     }
+    for key in (
+        "worker_lifetime_peak_rss_bytes", "calculation_rss_poll_count",
+        "calculation_windows_with_rss_poll", "host_process_scope", "phase_rss_method",
+    ):
+        metrics[key] = host.get(key)
     return payload, metrics
 
 
@@ -2261,6 +2250,8 @@ _EXECUTION_SOURCE_FILES = (
     "bench/__init__.py",
     "bench/cli.py",
     "bench/run.py",
+    "bench/process_tree.py",
+    "bench/_process_supervisor.py",
     "bench/env.py",
     "bench/benchmark_contract.py",
     "bench/benchmark_guardrails.py",
@@ -2476,6 +2467,8 @@ def _record_template(task: TaskSpec, run_id: str, attempt: int = 0) -> Dict[str,
         "attempted_feature_count": None,
         "finite_feature_count": None,
         "censor_lower_bound_sec": None,
+        "censor_bound_scope": None,
+        "timeout_phase": None,
         "policy_reason": None,
         "timeout_cutoff_complexity": None,
         "timeout_cutoff_complexity_metric": None,
@@ -4993,6 +4986,11 @@ def main(argv: List[str] | None = None) -> int:
                                 )
                                 record.update(finish_task_power())
                                 record.update(memory_preflight)
+                                record.update(exc.host_metrics)
+                                record["peak_rss_bytes"] = exc.host_metrics.get("host_peak_rss_bytes")
+                                record["adapter_stdout_tail"] = exc.stdout
+                                record["adapter_stderr"] = exc.stderr
+                                record["censor_bound_scope"] = exc.censor_bound_scope
                                 record["timeout_phase"] = exc.phase
                                 record["partial_duration_samples_sec"] = list(
                                     exc.partial_duration_samples_sec
@@ -5047,6 +5045,11 @@ def main(argv: List[str] | None = None) -> int:
                                 )
                                 record.update(finish_task_power())
                                 record.update(memory_preflight)
+                                record.update(exc.host_metrics)
+                                record["peak_rss_bytes"] = exc.host_metrics.get("host_peak_rss_bytes")
+                                record["adapter_stdout_tail"] = exc.stdout
+                                record["adapter_stderr"] = exc.stderr
+                                record["censor_bound_scope"] = exc.censor_bound_scope
                                 record["partial_duration_samples_sec"] = list(
                                     exc.partial_duration_samples_sec
                                 )

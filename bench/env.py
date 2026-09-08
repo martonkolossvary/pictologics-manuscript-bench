@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import site
 import subprocess
@@ -208,7 +209,7 @@ def _find_python(requested: str) -> Path:
     if _major_minor(sys.version.split()[0]) == _major_minor(requested):
         return Path(sys.executable).resolve()
 
-    uv = shutil.which("uv")
+    uv = _find_uv()
     if uv:
         proc = subprocess.run(
             [uv, "python", "find", requested],
@@ -360,7 +361,23 @@ def _create_venv(profile: RuntimeProfile, target: Path) -> None:
         _run([str(interpreter), "-m", "venv", str(target)])
 
 
+def _require_compatible_installer(profile: RuntimeProfile) -> None:
+    if profile.name != "medimage":
+        return
+    uv = _find_uv()
+    if uv is not None:
+        result = subprocess.run([uv, "--version"], capture_output=True, text=True, check=False)
+        if result.returncode == 0 and re.match(r"^uv 0\.8\.\d+(?:\s|$)", result.stdout.strip()):
+            return
+    raise EnvironmentError(
+        "MEDimage 0.9.8 requires uv >=0.8,<0.9 on every platform because its "
+        "wheel Python metadata rejects 3.10 patch releases with pip. "
+        "Install the reviewed uv version before creating adapter environments."
+    )
+
+
 def _install(profile: RuntimeProfile, target: Path) -> None:
+    _require_compatible_installer(profile)
     python = env_python(target)
     resolved_lock = _resolve_environment_lock(profile)
     requirements = [profile.requirement, *profile.extra_requirements]
@@ -651,6 +668,7 @@ def create_profile(profile: RuntimeProfile, *, force: bool = False) -> Path:
         verify_profile(profile)
         return target
 
+    _require_compatible_installer(profile)
     if target.exists():
         shutil.rmtree(target)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -673,6 +691,10 @@ def create_profiles(names: list[str] | None = None, *, force: bool = False) -> N
     unknown = sorted(set(selected).difference(profiles))
     if unknown:
         raise EnvironmentError(f"Unknown adapter profiles: {', '.join(unknown)}")
+    for name in selected:
+        target = env_dir_for_profile(profiles[name])
+        if force or not target.exists():
+            _require_compatible_installer(profiles[name])
     for name in selected:
         print(f"Creating isolated adapter environment: {name}")
         create_profile(profiles[name], force=force)

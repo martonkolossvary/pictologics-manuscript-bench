@@ -327,7 +327,7 @@ class BenchmarkRunnerTests(unittest.TestCase):
                 "import json, time",
                 "held = bytearray(8 * 1024 * 1024)",
                 "def event(name):",
-                "    print('BENCH_EVENT ' + json.dumps({'event': name}), flush=True)",
+                "    print('BENCH_EVENT ' + json.dumps({'event': name, 'iteration': 1}), flush=True)",
                 "event('worker_ready')",
                 "time.sleep(0.05)",
                 "event('warmup_complete')",
@@ -1639,7 +1639,7 @@ class BenchmarkRunnerTests(unittest.TestCase):
             case_id = Path(kwargs["image"]).name.split("-fbn32")[0].split("-image")[0]
             calls.append((adapter, case_id))
             if adapter == "slow":
-                raise run.AdapterTimeout(
+                failure = run.AdapterTimeout(
                     "slow",
                     5.0,
                     5.1,
@@ -1647,6 +1647,10 @@ class BenchmarkRunnerTests(unittest.TestCase):
                     partial_duration_samples_sec=(1.25,),
                     partial_cpu_time_samples_sec=(1.0,),
                 )
+                failure.host_metrics = {"host_peak_rss_bytes": 123456, "adapter_event_count": 3}
+                failure.stdout = "timeout stdout"
+                failure.stderr = "timeout stderr"
+                raise failure
             return adapter_payload(
                 adapter,
                 kwargs["families"],
@@ -1686,6 +1690,12 @@ class BenchmarkRunnerTests(unittest.TestCase):
         self.assertEqual(timed[0]["partial_duration_samples_sec"], [1.25])
         self.assertEqual(timed[0]["partial_cpu_time_samples_sec"], [1.0])
         self.assertEqual(timed[0]["partial_completed_iterations"], 1)
+        self.assertEqual(timed[0]["host_peak_rss_bytes"], 123456)
+        self.assertEqual(timed[0]["peak_rss_bytes"], 123456)
+        self.assertEqual(timed[0]["adapter_event_count"], 3)
+        self.assertEqual(timed[0]["adapter_stdout_tail"], "timeout stdout")
+        self.assertEqual(timed[0]["adapter_stderr"], "timeout stderr")
+        self.assertEqual(timed[0]["censor_bound_scope"], "calculation_elapsed_wall_time")
         self.assertFalse(timed[0]["success"])
 
     def test_timeout_cutoff_applies_to_the_baseline_adapter(self) -> None:
@@ -1878,7 +1888,10 @@ class BenchmarkRunnerTests(unittest.TestCase):
         self.make_dataset([1000])
 
         def interrupted(adapter, **kwargs):
-            raise run.AdapterInterrupted(adapter, 0.2, 999999)
+            failure = run.AdapterInterrupted(adapter, 0.2, 999999)
+            failure.host_metrics = {"host_peak_rss_bytes": 123456}
+            failure.stderr = "interrupted stderr"
+            raise failure
 
         patchers = self.stable_patchers(interrupted)
         common = self.args(
@@ -1891,6 +1904,9 @@ class BenchmarkRunnerTests(unittest.TestCase):
             self.assertEqual(run.main(common), 130)
         with BenchmarkLedger(self.report / "benchmark.sqlite3") as ledger:
             self.assertEqual(next(iter(ledger.status_counts())), STATUS_INTERRUPTED)
+            self.assertEqual(ledger.records()[0]["host_peak_rss_bytes"], 123456)
+            self.assertEqual(ledger.records()[0]["adapter_stderr"], "interrupted stderr")
+            self.assertEqual(ledger.records()[0]["censor_bound_scope"], "whole_task_elapsed_wall_time")
         run_meta = json.loads(
             (self.report / "run_meta.json").read_text(encoding="utf-8")
         )
@@ -2133,7 +2149,8 @@ class BenchmarkRunnerTests(unittest.TestCase):
             run._run_process_command(
                 [sys.executable, "-c", code],
                 adapter_name="fake",
-                timeout=0.1,
+                # Include interpreter + process supervisor startup on Windows.
+                timeout=0.5,
                 sample_interval=0.01,
                 termination_grace=0.1,
             )

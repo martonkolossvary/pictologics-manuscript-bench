@@ -92,6 +92,21 @@ Inside the timer:
 The controller records wall-clock samples from the adapter and process-tree CPU
 and RSS observations from the host.
 
+Pictologics local-intensity sphere offsets are invalidated outside the timer
+before warmup, each calibration call, and every measured call. Their native
+construction is therefore included in each calculation. This revision uses
+endpoint contract 10 and adapter timing contract 11; previous runs are not
+resume-compatible.
+
+Host CPU and RSS cover the supervisor and adapter process tree. Worker
+`ru_maxrss` is retained separately as `worker_lifetime_peak_rss_bytes` and may
+raise the overall peak, but never the worker-ready baseline or calculation
+peak. Phase RSS uses current tree samples at events and periodic polls.
+`complete` means every completed observation window had a positive periodic
+RSS sample; it does not guarantee that sampling caught an instantaneous peak.
+Windows without a periodic sample, including short-lived phases, are marked
+`partial` (or `unavailable` when no current RSS was observed).
+
 The controller also probes live power state immediately before and after every
 task, with three short retries for transiently missing macOS profile output.
 Both observations, timestamps, raw mode, portable tag, power source, probe
@@ -103,13 +118,25 @@ the resume fingerprint.
 
 `--timeout` is a safety ceiling, not an imputed runtime. Startup/warmup has one
 clock. Receipt of the `worker_ready` event starts a fresh calculation clock.
-On expiry, the controller terminates the adapter process tree, waits
-`--termination-grace`, escalates if required, and records:
+On expiry, the controller terminates the owned process tree and waits for
+cleanup before another task can launch. Windows uses a non-inheritable Job
+Object with kill-on-close; macOS uses an isolated process group and a separate
+watcher that kills the group on controller-pipe EOF or termination. Ownership
+survives an adapter exiting before its descendants and a forced controller
+exit. Cleanup also runs on success, error, and interruption. The record retains:
 
 - terminal status `timed_out_censored`
 - timeout phase and lower-bound elapsed time
 - any completed wall/CPU call samples
 - process and memory observations available before termination
+- stdout/stderr diagnostic tails bounded to 64 KiB of text each
+
+Public task and diagnostic tables retain `timeout_phase` and
+`censor_bound_scope` alongside `censor_lower_bound_sec`. Startup/warmup and the
+prepared calculation region have separate elapsed wall-time scopes. The
+prepared region includes all measured calls and their between-call work; its
+elapsed bound is not a lower bound on the reported per-call median.
+Interruption bounds cover whole-task elapsed wall time.
 
 No timeout, failure, unsupported task, policy skip, interruption,
 or pending task enters an estimate of measured duration.

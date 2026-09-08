@@ -80,7 +80,9 @@ path-length budget. The checked-in profile is valid only for its exact AMD
 Ryzen 7 9800X3D host; create a separate public-safe profile for any other
 Windows machine.
 
-Windows setup requires Python 3.9, 3.10, and 3.12 plus `uv` 0.8. PyRadiomics
+Both platforms require `uv` >=0.8,<0.9 for clean MEDimage installation; setup
+rejects incompatible installers before replacing an existing environment.
+Windows setup requires Python 3.9, 3.10, and 3.12. PyRadiomics
 uses its official SHA-256-pinned CPython 3.9 Windows wheel because the upstream
 3.1.0 release provides no newer Windows wheels and its source build requires a
 native compiler. The launcher holds a `SetThreadExecutionState` system-sleep

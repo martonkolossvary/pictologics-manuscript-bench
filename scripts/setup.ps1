@@ -13,7 +13,7 @@ foreach ($version in @("3.9", "3.10", "3.12")) {
     }
 }
 
-# uv is required on Windows because MEDimage 0.9.8 publishes the legacy
+# uv is required on every platform because MEDimage 0.9.8 publishes the legacy
 # Requires-Python specifier <=3.10, which pip interprets as <=3.10.0. uv
 # correctly resolves the tested 3.10.x environment. bench.env also searches
 # this per-user location when it is not exported through PATH.
@@ -26,8 +26,8 @@ if (-not $uv) {
     )
     $uv = $uvCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 }
-if (-not $uv) {
-    throw "uv is required on Windows. Install it with: python -m pip install --user 'uv>=0.8,<0.9'"
+if (-not $uv -or (& $uv --version) -notmatch '^uv 0\.8\.\d+(?:\s|$)') {
+    throw "uv >=0.8,<0.9 is required. Install it with: python -m pip install --user 'uv>=0.8,<0.9'"
 }
 
 poetry sync

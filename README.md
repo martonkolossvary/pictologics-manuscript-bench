@@ -83,7 +83,7 @@ silently substituting another input image is not permitted.
   Windows instead uses CPython 3.9 with the official, checksum-pinned 3.1.0
   wheel. These runtimes may be installed system-wide or managed by `uv`.
 - Poetry 2.2 or newer, below 3.0
-- `uv` 0.8 on Windows; MEDimage's legacy Python metadata cannot be resolved
+- `uv` >=0.8,<0.9 on macOS and Windows; MEDimage's legacy Python metadata cannot be resolved
   correctly by current pip releases
 - network access for the first input and environment bootstrap
 - enough local SSD space for inputs, environments, staged inputs, and results
