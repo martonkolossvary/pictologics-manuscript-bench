@@ -114,7 +114,7 @@ def test_timeout_retains_memory_cpu_events_and_bounded_output(prepared):
     script = (
         "import json, sys, time; x=bytearray(32*1024*1024); "
         'print("diagnostic", flush=True); '
-        'print("x"*70000 + " stderr-end", file=sys.stderr, flush=True); '
+        'print("x"*70000 + " stderr-end", file=sys.stderr, end="", flush=True); '
         + (
             'print(\'BENCH_EVENT {"event":"worker_ready"}\', flush=True); '
             if prepared
@@ -134,7 +134,7 @@ def test_timeout_retains_memory_cpu_events_and_bounded_output(prepared):
     assert exc.host_metrics["host_cpu_time_sec"] is not None
     assert exc.host_metrics["adapter_event_count"] == int(prepared)
     assert "diagnostic" in exc.stdout
-    assert exc.stderr.endswith(" stderr-end\n")
+    assert exc.stderr.endswith(" stderr-end")
     assert len(exc.stderr) <= 65536
     assert exc.censor_bound_scope == exc.phase + "_elapsed_wall_time"
 

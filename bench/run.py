@@ -671,7 +671,7 @@ def _run_process_command(
         nonlocal completed_iterations, worker_lifetime_peak_rss
         nonlocal calculation_windows_observed, current_window_poll_count
         assert process.stdout is not None
-        for line in process.stdout:
+        for line in iter(lambda: process.stdout.readline(65536), ""):
             stdout_lines.append(line)
             stripped = line.strip()
             if not stripped.startswith(BENCHMARK_EVENT_PREFIX):
@@ -721,7 +721,7 @@ def _run_process_command(
 
     def read_stderr() -> None:
         assert process.stderr is not None
-        for line in process.stderr:
+        for line in iter(lambda: process.stderr.readline(65536), ""):
             stderr_lines.append(line)
 
     def snapshot_host_metrics():
