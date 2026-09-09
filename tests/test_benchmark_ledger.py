@@ -202,6 +202,7 @@ class BenchmarkLedgerTests(unittest.TestCase):
             with BenchmarkLedger(path) as ledger:
                 self.assertEqual(ledger.recover_running(), 1)
                 self.assertEqual(ledger.status(task.task_id), STATUS_INTERRUPTED)
+                self.assertEqual(ledger.verified_records_and_payloads(), ([], []))
                 self.assertEqual(ledger.mark_running(task.task_id), 2)
 
     def test_timeout_cutoff_persists_the_earliest_complexity(self) -> None:
@@ -255,6 +256,11 @@ class BenchmarkLedgerTests(unittest.TestCase):
                 )
                 self.assertEqual(ledger.recover_failed(), 1)
                 self.assertEqual(ledger.status(task.task_id), STATUS_INTERRUPTED)
+                self.assertEqual(ledger.verified_records_and_payloads(), ([], []))
+                archived = ledger.connection.execute(
+                    "SELECT details_json FROM events WHERE event_type = 'failed_task_requeued'"
+                ).fetchone()[0]
+                self.assertIn('prior_record_json', archived)
                 failed_attempt = ledger.connection.execute(
                     "SELECT status, error FROM task_attempts "
                     "WHERE task_id = ? AND attempt = 1",

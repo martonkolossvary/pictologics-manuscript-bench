@@ -283,7 +283,8 @@ class BenchmarkWorkspaceTests(unittest.TestCase):
             def send_signal(self, signum):
                 self.forwarded_signals.append(signum)
 
-            def wait(self):
+            def wait(self, timeout=None):
+                assert timeout is not None and timeout <= 0.1
                 signal.raise_signal(signal.SIGINT)
                 return 130
 

@@ -524,7 +524,7 @@ class BenchmarkLedger:
         now = time.time()
         with self.connection:
             rows = self.connection.execute(
-                "SELECT task_id, attempt, error FROM tasks WHERE status = ?",
+                "SELECT task_id, attempt, error, record_json FROM tasks WHERE status = ?",
                 (STATUS_FAILED,),
             ).fetchall()
             for row in rows:
@@ -532,7 +532,7 @@ class BenchmarkLedger:
                 self.connection.execute(
                     """
                     UPDATE tasks
-                    SET status = ?, finished_at = ?, error = ?
+                    SET status = ?, finished_at = ?, error = ?, record_json = NULL
                     WHERE task_id = ?
                     """,
                     (
@@ -553,6 +553,7 @@ class BenchmarkLedger:
                             {
                                 "failed_attempt": int(row["attempt"]),
                                 "prior_error": row["error"],
+                                "prior_record_json": row["record_json"],
                             }
                         ),
                     ),

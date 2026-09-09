@@ -925,7 +925,13 @@ def _run_controller_command(command: list[str]) -> int:
         process = subprocess.Popen(command, **popen_kwargs)
         for signum in pending_signals:
             send_to_controller(signum)
-        return int(process.wait())
+        # Windows' infinite WaitForSingleObject delays Python signal handlers
+        # until the child exits. Return to Python regularly to forward Ctrl+C.
+        while True:
+            try:
+                return int(process.wait(timeout=0.1))
+            except subprocess.TimeoutExpired:
+                continue
     finally:
         for signum, previous in previous_handlers.items():
             signal.signal(signum, previous)
