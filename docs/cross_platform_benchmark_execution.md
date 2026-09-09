@@ -19,6 +19,16 @@ print-only by default, and `--validate-plans` invokes only controller dry-runs.
 Dry-runs and calculations require a clean Git worktree; ignored scientific
 inputs, adapter environments, and external result roots do not make it dirty.
 
+The default schedule finishes Pictologics on all three pillars before moving to
+the next adapter. Stages share each pillar's all-adapter ledger. Workers have a
+single 900-second wall-time deadline and a 12 GiB memory cap, reduced by the live
+available-memory reserve. Override these with `--timeout`, `--memory-cap-gib`,
+and `--execution-order`; replay exactly the same options on resume.
+
+Windows enforces combined committed memory with a Job Object before worker
+launch. macOS uses the preflight rejection and sampled process-tree RSS guard;
+the latter may overshoot between samples and is not an OS allocation ceiling.
+
 ## macOS publication host
 
 Use `configs/benchmark/hosts/mac-m4pro-01.json` only on the exact matching
@@ -106,6 +116,12 @@ waits for the active ledger checkpoint. Re-run the identical command to
 continue. After an ungraceful terminal closure, forced kill, or power loss, the
 same resume command transactionally converts any in-flight task to interrupted
 before retrying it; already committed measured tasks remain untouched.
+
+Memory-limit failures and preflight rejections remain terminal on restart, as do
+their cutoff skips. Equal-sized repeats and larger images in the same
+adapter/workload/mask/representation series are skipped. Unrelated real-world
+patients remain eligible. Resource policies and execution order changed in
+run-spec schema 15; schema-14 results must stay in their original directory.
 
 Qualification records are generated locally below the ignored workspace and
 must never be committed as claimed benchmark results.

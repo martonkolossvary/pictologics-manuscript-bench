@@ -104,6 +104,9 @@ PUBLIC_TASK_COLUMNS = (
     "memory_empirical_same_scope_observation_count",
     "memory_estimate_bytes", "memory_available_bytes", "memory_total_bytes",
     "memory_reserve_bytes", "memory_budget_bytes", "memory_preflight_decision",
+    "worker_memory_limit_bytes", "worker_memory_limit_method",
+    "memory_cutoff_complexity", "memory_cutoff_complexity_metric",
+    "memory_cutoff_evidence_task_id",
 )
 
 PUBLIC_QC_ISSUE_COLUMNS = (
@@ -666,6 +669,8 @@ def _protocol_summary(run_spec: Any) -> pd.DataFrame:
         "timing_observations",
         "capture_values",
         "timeout_seconds",
+        "timeout_scope",
+        "execution_order",
         "keep_going",
         "task_plan_sha256",
         "runtime_profiles_sha256",

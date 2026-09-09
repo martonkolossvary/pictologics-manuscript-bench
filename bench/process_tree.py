@@ -11,7 +11,7 @@ import psutil
 
 
 class _WindowsJob:
-    def __init__(self):
+    def __init__(self, memory_limit_bytes=None):
         import ctypes
         from ctypes import wintypes
 
@@ -83,6 +83,12 @@ class _WindowsJob:
         self._check(self.handle)
         limits = ExtendedLimit()
         limits.BasicLimitInformation.LimitFlags = 0x2000  # KILL_ON_JOB_CLOSE
+        if memory_limit_bytes is not None:
+            # Bound combined committed memory, including every descendant.
+            # Install before assigning/releasing the gated supervisor: an RSS
+            # polling limit alone cannot stop a large allocation between polls.
+            limits.BasicLimitInformation.LimitFlags |= 0x200  # JOB_MEMORY
+            limits.JobMemoryLimit = int(memory_limit_bytes)
         try:
             self._check(
                 self.kernel.SetInformationJobObject(
@@ -121,8 +127,10 @@ class _WindowsJob:
 
 
 class ProcessTree:
-    def __init__(self, command, *, environment=None):
-        self.job = _WindowsJob() if os.name == "nt" else None
+    def __init__(self, command, *, environment=None, memory_limit_bytes=None):
+        if memory_limit_bytes is not None and int(memory_limit_bytes) <= 0:
+            raise ValueError("worker memory limit must be positive")
+        self.job = _WindowsJob(memory_limit_bytes) if os.name == "nt" else None
         self.process = None
         self.closed = False
         try:

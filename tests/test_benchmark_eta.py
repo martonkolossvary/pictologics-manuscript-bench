@@ -248,7 +248,7 @@ def test_eta_does_not_extrapolate_faster_than_reviewed_quadratic_work() -> None:
     assert 0.0 < estimate.seconds <= 32.0
 
 
-def test_eta_caps_extreme_extrapolation_at_two_phase_timeout_bound() -> None:
+def test_eta_caps_extreme_extrapolation_at_total_timeout_bound() -> None:
     rows = [
         _row(
             ordinal=1,
@@ -382,3 +382,26 @@ def test_eta_uses_observed_timeout_turnaround_for_an_exact_repeat() -> None:
     assert estimate is not None
     assert estimate.seconds == pytest.approx(60.0)
     assert estimate.timeout_repeat_predictions == 1
+
+
+def test_eta_excludes_equal_and_larger_memory_cutoff_tasks() -> None:
+    rows = [
+        _row(ordinal=1, case_id="small", voxels=1000, status="measured", started=10, finished=20),
+        _row(ordinal=2, case_id="same-size", voxels=1000, status="pending"),
+        _row(ordinal=3, case_id="large", voxels=8000, status="pending"),
+    ]
+    estimate = estimate_pending_turnaround(rows, memory_cutoffs=[{
+        "adapter": "adapter", "workload_key": "texture", "guardrail_group": "synthetic-series",
+        "complexity_metric": "image_voxels", "cutoff_complexity": 2000,
+    }])
+    assert estimate.seconds == 0
+    assert estimate.memory_cutoff_predictions == 2
+
+
+def test_eta_does_not_use_baseline_to_predict_an_unobserved_adapter() -> None:
+    rows = [
+        _row(ordinal=1, case_id="small", voxels=1000, status="measured", started=10, finished=20),
+        _row(ordinal=2, case_id="same", voxels=1000, status="pending"),
+    ]
+    rows[1]["adapter"] = "other-native-library"
+    assert estimate_pending_turnaround(rows) is None

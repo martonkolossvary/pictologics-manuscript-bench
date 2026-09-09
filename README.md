@@ -325,9 +325,10 @@ the run. Repeated failures remain visible in the ledger and QC report.
 - Loading, checksum verification, mask preparation, resegmentation,
   representation construction, and result serialisation are outside the timer.
 - Matrix, mesh, neighbourhood construction, and feature arithmetic are inside.
-- Startup/warmup and calculation receive separate timeout clocks. A timeout is
-  a censored terminal outcome with its lower bound and completed samples; it is
-  never converted into a duration.
+- Each task has one 900-second wall-time deadline covering startup, warmup,
+  calibration, measurements and serialization. A timeout is a censored terminal
+  outcome with its whole-task elapsed bound and completed samples; it is never
+  converted into a measured per-call duration.
 - The controller terminates the adapter process tree, waits the configured
   grace period, and escalates if needed.
 - No adapter is skipped from a predicted runtime or a relative-speed estimate.
@@ -337,11 +338,22 @@ the run. Repeated failures remain visible in the ledger and QC report.
   strictly larger; they receive the explicit terminal status
   `skipped_timeout_cutoff`. Equal-sized repeats, different masks or
   configurations, and unrelated real-world cases still run.
-- Memory estimation is advisory in the publication launcher. It separates fixed
-  process overhead from input-dependent growth and retains the quadratic Z-Rad
-  spatial-autocorrelation diagnostic, but an estimate above the live budget is
-  only tagged and never prevents a calculation. An estimate is not measured
-  memory.
+- Memory estimates above the live budget prevent launch. The launcher caps
+  each worker tree at 12 GiB, reduced when available RAM is lower, and reserves
+  at least 4 GiB or 20% of physical RAM for the host. Windows enforces combined
+  committed memory using a Job Object before releasing the worker. All platforms
+  also check tree RSS every 50 ms; on POSIX this sampled limit can overshoot.
+  An allocation failure or preflight rejection establishes a persistent cutoff
+  for that adapter/workload/mask/representation series: equal-sized repeats and
+  larger images are skipped. Distinct real-world cases remain independent.
+  Estimates, actual allocation failures and cutoff skips have separate terminal
+  statuses; none is a measured result.
+- The default launcher finishes Pictologics across all three pillars, then each
+  remaining adapter in workspace order. It shares the original all-adapter ledger
+  for each pillar. Within each adapter, repeat 1 covers sizes ascending before
+  repeats 2 and 3. `--execution-order rotated` selects the balanced comparison
+  schedule instead. Order and resource policy are immutable run provenance;
+  changing them requires a new result directory.
 - Power state is task provenance, not eligibility. The controller probes at
   both task boundaries and QC identifies unavailable observations or a mode
   transition; results can therefore be stratified without blocking execution.
@@ -349,7 +361,7 @@ the run. Repeated failures remain visible in the ledger and QC report.
   separately by adapter, workload, and synthetic series, while separating a
   non-negative fixed startup term once three sizes are observed. It prefers an
   earlier repeat of the identical task, reports an extrapolation range, honors
-  timeout bounds and persisted timeout cutoffs, and does not publish a numeric
+  timeout bounds and persisted timeout/memory cutoffs, and does not publish a numeric
   all-pillar ETA from unseen future tasks. Total voxel count already represents
   the three-dimensional volume and is never cubed again.
 - QC reports failures as errors and censored timeouts, timeout-cutoff skips,

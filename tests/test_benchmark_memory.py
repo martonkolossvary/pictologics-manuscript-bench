@@ -83,7 +83,7 @@ def test_preflight_scales_only_empirical_growth_above_fixed_overhead() -> None:
     assert result["memory_estimate_bytes"] == 3854
 
 
-def test_estimate_above_budget_is_advisory_and_still_launches() -> None:
+def test_estimate_above_budget_prevents_launch() -> None:
     policy = MemoryPreflightPolicy(
         reserve_bytes=0,
         budget_fraction=1.0,
@@ -103,7 +103,7 @@ def test_estimate_above_budget_is_advisory_and_still_launches() -> None:
     )
     assert result["memory_budget_bytes"] == 500
     assert result["memory_estimate_exceeds_budget"] is True
-    assert result["memory_preflight_decision"] == "launch"
+    assert result["memory_preflight_decision"] == "skip"
 
 
 def test_zrad_spatial_autocorrelation_has_safe_first_launch_quadratic_bound() -> None:
@@ -120,4 +120,4 @@ def test_zrad_spatial_autocorrelation_has_safe_first_launch_quadratic_bound() ->
     )
     assert result["memory_quadratic_static_estimate_bytes"] > 7 * 1024**3
     assert result["memory_estimate_exceeds_budget"] is True
-    assert result["memory_preflight_decision"] == "launch"
+    assert result["memory_preflight_decision"] == "skip"

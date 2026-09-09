@@ -330,6 +330,18 @@ class BenchmarkLedger:
                 created_at REAL NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS memory_cutoffs (
+                scope_key TEXT PRIMARY KEY,
+                adapter TEXT NOT NULL,
+                workload_key TEXT NOT NULL,
+                guardrail_group TEXT NOT NULL,
+                complexity_metric TEXT NOT NULL,
+                cutoff_complexity INTEGER NOT NULL,
+                reason TEXT NOT NULL,
+                evidence_task_id TEXT REFERENCES tasks(task_id),
+                created_at REAL NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS events (
                 event_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 created_at REAL NOT NULL,
@@ -974,6 +986,87 @@ class BenchmarkLedger:
     def timeout_cutoffs(self) -> List[Dict[str, Any]]:
         rows = self.connection.execute(
             "SELECT * FROM timeout_cutoffs ORDER BY scope_key"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def activate_memory_cutoff(
+        self,
+        *,
+        scope_key: str,
+        adapter: str,
+        workload_key: str,
+        guardrail_group: str,
+        complexity_metric: str,
+        cutoff_complexity: int,
+        reason: str,
+        evidence_task_id: str,
+    ) -> None:
+        """Persist the earliest memory boundary for one scaling series."""
+
+        now = time.time()
+        with self.connection:
+            existing = self.connection.execute(
+                "SELECT cutoff_complexity FROM memory_cutoffs WHERE scope_key = ?",
+                (scope_key,),
+            ).fetchone()
+            if existing is not None and int(existing["cutoff_complexity"]) <= int(
+                cutoff_complexity
+            ):
+                return
+            self.connection.execute(
+                """
+                INSERT INTO memory_cutoffs(
+                    scope_key, adapter, workload_key, guardrail_group, complexity_metric,
+                    cutoff_complexity,
+                    reason, evidence_task_id, created_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(scope_key) DO UPDATE SET
+                    guardrail_group = excluded.guardrail_group,
+                    complexity_metric = excluded.complexity_metric,
+                    cutoff_complexity = excluded.cutoff_complexity,
+                    reason = excluded.reason,
+                    evidence_task_id = excluded.evidence_task_id,
+                    created_at = excluded.created_at
+                """,
+                (
+                    scope_key,
+                    adapter,
+                    workload_key,
+                    guardrail_group,
+                    complexity_metric,
+                    int(cutoff_complexity),
+                    reason,
+                    evidence_task_id,
+                    now,
+                ),
+            )
+            self.connection.execute(
+                "INSERT INTO events(created_at, event_type, task_id, details_json) "
+                "VALUES(?, ?, ?, ?)",
+                (
+                    now,
+                    "memory_cutoff_activated",
+                    evidence_task_id,
+                    canonical_json(
+                        {
+                            "scope_key": scope_key,
+                            "guardrail_group": guardrail_group,
+                            "complexity_metric": complexity_metric,
+                            "cutoff_complexity": int(cutoff_complexity),
+                            "reason": reason,
+                        }
+                    ),
+                ),
+            )
+
+    def memory_cutoff(self, scope_key: str) -> Optional[sqlite3.Row]:
+        return self.connection.execute(
+            "SELECT * FROM memory_cutoffs WHERE scope_key = ?", (scope_key,)
+        ).fetchone()
+
+    def memory_cutoffs(self) -> List[Dict[str, Any]]:
+        rows = self.connection.execute(
+            "SELECT * FROM memory_cutoffs ORDER BY scope_key"
         ).fetchall()
         return [dict(row) for row in rows]
 

@@ -57,8 +57,7 @@ Voxel count already equals the product of the three image dimensions; it is
 never cubed again. The learned exponent is constrained to the reviewed range
 0–2: linear voxel traversal through the quadratic dense pairwise ROI work in
 spatial autocorrelation. An uncertainty range is retained, and extrapolated
-task times are capped at the combined startup/warmup and calculation timeout
-bound. Pending tasks already covered by a persisted timeout cutoff contribute
+task times are capped at the single total worker timeout bound. Pending tasks already covered by a persisted timeout cutoff contribute
 zero calculation time to the ETA. An equal-sized fresh-process repeat is not
 skipped; its ETA uses the controller turnaround observed for the prior timeout.
 Until at least one measured task exists, ETA remains unavailable rather
@@ -116,8 +115,10 @@ the resume fingerprint.
 
 ## Timeout procedure
 
-`--timeout` is a safety ceiling, not an imputed runtime. Startup/warmup has one
-clock. Receipt of the `worker_ready` event starts a fresh calculation clock.
+`--timeout` is one worker wall-time safety ceiling, defaulting to 900 seconds.
+It includes startup, preparation, warmup, calibration, all observations and
+serialization. `worker_ready` never resets the deadline. Controller validation,
+input staging and verified cleanup add overhead outside that worker budget.
 On expiry, the controller terminates the owned process tree and waits for
 cleanup before another task can launch. Windows uses a non-inheritable Job
 Object with kill-on-close; macOS uses an isolated process group and a separate
@@ -132,11 +133,9 @@ exit. Cleanup also runs on success, error, and interruption. The record retains:
 - stdout/stderr diagnostic tails bounded to 64 KiB of text each
 
 Public task and diagnostic tables retain `timeout_phase` and
-`censor_bound_scope` alongside `censor_lower_bound_sec`. Startup/warmup and the
-prepared calculation region have separate elapsed wall-time scopes. The
-prepared region includes all measured calls and their between-call work; its
-elapsed bound is not a lower bound on the reported per-call median.
-Interruption bounds cover whole-task elapsed wall time.
+`censor_bound_scope` alongside `censor_lower_bound_sec`. Timeout and interruption
+bounds cover whole-task elapsed wall time. This elapsed bound is not a lower
+bound on the reported per-call median; incomplete tasks remain unmeasured.
 
 No timeout, failure, unsupported task, policy skip, interruption,
 or pending task enters an estimate of measured duration.
@@ -151,21 +150,54 @@ evidence task ID are retained.
 
 ## Resource policy
 
-Memory estimation describes task requirements from static workload properties
-and earlier measured process-tree peaks. Fixed interpreter/library RSS is not
-scaled with image volume: the input-ratio exponent of 1.5 applies only to
-observed growth above the lowest same-adapter/workload process baseline. The
-maximum projected increment across strata is retained. Z-Rad spatial
-autocorrelation also has a conservative quadratic diagnostic because it
-materializes pairwise ROI-coordinate distances. In the publication protocol this estimate is
-observe-only: `memory_estimate_exceeds_budget` is retained, but every task is
-launched. Measured host/process-tree RSS, not this estimate, is the reported
-memory result. Memory estimates never gate execution.
+Every task receives a live memory budget: the minimum of the configured cap,
+80% of available memory, and available memory minus a reserve of at least 4 GiB
+or 20% of total physical RAM. The launcher defaults to a 12 GiB cap. These are
+operational resource ceilings, not measured peak-memory claims.
 
-There is no predictive or relative-speed truncation in the publication
-protocol. Only an actually observed timeout suppresses strictly larger images
-in its exact adapter/workload/mask/configuration scaling series. This avoids
-known larger-image timeouts without extrapolating across distinct inputs.
+Preflight estimates above this budget produce `skipped_memory_preflight` without
+launching a worker. The model separates fixed interpreter/library overhead from
+input-dependent growth and includes the quadratic ROI allocation in Z-Rad
+spatial autocorrelation. Empirical growth can conservatively reject feasible
+tasks; report this policy censoring separately from native allocation failures.
+
+On Windows, a Job Object enforces combined committed memory for the supervisor,
+adapter and all descendants. The limit is installed before the gated worker is
+released. All platforms additionally check summed tree RSS every 50 ms and stop
+the tree on excess. POSIX has the sampled guard and preflight gate, not a Windows
+style hard allocation ceiling; allocations between samples may overshoot. Do not
+claim equivalent operating-system containment on macOS from a Windows test.
+
+An explicit native allocation failure or RSS-limit breach produces
+`memory_limit_exceeded`, retaining host metrics and diagnostic tails. Both this
+status and preflight rejection establish durable cutoffs in the exact
+adapter/workload/mask/subject/representation scope. Equal-sized repeats and larger
+images receive `skipped_memory_cutoff`. Cutoffs survive resume and are reconstructed
+from their evidence records if a crash interrupted persistence. Neither outcome
+is automatically retried. Distinct real-world patients and other configurations
+remain independent. None of these statuses contributes a measured runtime.
+
+There is no relative-speed truncation by default. Timeout cutoffs continue to
+apply only to strictly larger images in the same scope; memory cutoffs also
+suppress equal-sized repeats because repeating a refused allocation is unsafe.
+
+## Execution order
+
+The default launcher stages adapters across all three datasets: Pictologics
+first, then the remaining adapters in workspace order. Each dataset retains one
+all-adapter ledger and shared staged inputs. A stage ends with `stage_completed`
+while other adapters remain pending; replaying the launcher resumes without
+rerunning terminal tasks. A stage selector changes which pending tasks execute,
+not their immutable specifications or numerical comparison keys.
+
+Within each adapter, the first repeat screens sizes ascending before the other
+two repeats. Successful tasks still require three fresh processes, each with
+three observations. Native calculation clocks and numerical checks are unchanged.
+The alternate `rotated` schedule balances adapter positions across comparison
+blocks. Adapter-first order improves time to baseline results but introduces a
+time/order confound for between-adapter comparisons; a separate rotated
+confirmation run can check for thermal or background-load drift. Never pool
+these policies under one run fingerprint.
 
 ## Reporting
 

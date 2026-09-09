@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 
 
-RUN_SPEC_SCHEMA_VERSION = 14
+RUN_SPEC_SCHEMA_VERSION = 15
 
 STATUS_PENDING = "pending"
 STATUS_RUNNING = "running"
@@ -17,6 +17,9 @@ STATUS_INTERRUPTED = "interrupted"
 STATUS_UNSUPPORTED = "unsupported"
 STATUS_SKIPPED = "skipped_policy"
 STATUS_SKIPPED_TIMEOUT = "skipped_timeout_cutoff"
+STATUS_MEMORY_LIMIT = "memory_limit_exceeded"
+STATUS_SKIPPED_MEMORY_PREFLIGHT = "skipped_memory_preflight"
+STATUS_SKIPPED_MEMORY = "skipped_memory_cutoff"
 
 TERMINAL_STATUSES = frozenset(
     {
@@ -26,6 +29,9 @@ TERMINAL_STATUSES = frozenset(
         STATUS_UNSUPPORTED,
         STATUS_SKIPPED,
         STATUS_SKIPPED_TIMEOUT,
+        STATUS_MEMORY_LIMIT,
+        STATUS_SKIPPED_MEMORY_PREFLIGHT,
+        STATUS_SKIPPED_MEMORY,
     }
 )
 RECOVERABLE_STATUSES = frozenset({STATUS_PENDING, STATUS_INTERRUPTED})
@@ -40,6 +46,9 @@ ALL_STATUSES = frozenset(
         STATUS_UNSUPPORTED,
         STATUS_SKIPPED,
         STATUS_SKIPPED_TIMEOUT,
+        STATUS_MEMORY_LIMIT,
+        STATUS_SKIPPED_MEMORY_PREFLIGHT,
+        STATUS_SKIPPED_MEMORY,
     }
 )
 
@@ -241,6 +250,7 @@ class RunSpec:
     endpoint_contract_path: Optional[str] = None
     endpoint_contract_sha256: Optional[str] = None
     memory_preflight: Tuple[Tuple[str, Any], ...] = ()
+    execution_order: str = "adapter-first"
     schema_version: int = RUN_SPEC_SCHEMA_VERSION
 
     @classmethod
@@ -285,6 +295,8 @@ class RunSpec:
             "timing_observations": self.timing_observations,
             "capture_values": self.capture_values,
             "timeout_seconds": self.timeout_seconds,
+            "timeout_scope": "whole_task_elapsed_wall_time",
+            "execution_order": self.execution_order,
             "keep_going": self.keep_going,
             "task_plan_sha256": self.task_plan_sha256,
             "runtime_profiles_sha256": self.runtime_profiles_sha256,

@@ -12,6 +12,7 @@ import atexit
 import ctypes
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -794,7 +795,16 @@ def build_commands(
     host_profile_sha256: str | None = None,
     host_settings: dict[str, Any] | None = None,
     repeats: int | None = None,
+    timeout_seconds: float = 900.0,
+    memory_cap_gib: float = 12.0,
+    execution_order: str = "adapter-first",
 ) -> list[list[str]]:
+    if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+        raise ValueError("timeout must be finite and positive")
+    if not math.isfinite(memory_cap_gib) or memory_cap_gib <= 0:
+        raise ValueError("memory cap must be finite and positive")
+    if execution_order not in {"adapter-first", "rotated"}:
+        raise ValueError("unknown execution order")
     policy = workspace["launch_policy"]
     endpoint = workspace["endpoint_contract"]
     repository = root.resolve().parents[1]
@@ -839,7 +849,11 @@ def build_commands(
             "--timing-observations",
             str(workspace["task_inventory"]["measured_observations_per_process"]),
             "--timeout",
-            str(policy["timeout_seconds"]),
+            str(timeout_seconds),
+            "--memory-cap-gib",
+            str(memory_cap_gib),
+            "--execution-order",
+            execution_order,
             "--checkpoint-interval",
             str(policy["checkpoint_interval_tasks"]),
             "--progress-interval",
@@ -876,6 +890,24 @@ def build_commands(
             command.append("--dry-run")
         commands.append(command)
         project_task_offset += pillar_task_counts[pillar]
+    if execution_order == "adapter-first":
+        staged = []
+        adapter_count = len(workspace["adapter_order"])
+        for adapter_index, adapter in enumerate(workspace["adapter_order"]):
+            earlier_pillars = 0
+            for (pillar, _), command in zip(PILLARS, commands):
+                # Each pillar retains its full all-adapter ledger. Account for
+                # completed stages on the other pillars, without counting this
+                # pillar's earlier adapters twice in the project progress.
+                offset = (
+                    adapter_index * (project_total_tasks - pillar_task_counts[pillar])
+                    // adapter_count + earlier_pillars
+                )
+                staged_command = [*command, "--execute-adapters", adapter]
+                staged_command[staged_command.index("--project-task-offset") + 1] = str(offset)
+                staged.append(staged_command)
+                earlier_pillars += pillar_task_counts[pillar] // adapter_count
+        return staged
     return commands
 
 
@@ -965,6 +997,9 @@ def main() -> int:
         action="store_true",
         help="Invoke each controller with --dry-run; no adapter calculation occurs",
     )
+    parser.add_argument("--timeout", type=float, default=900.0, help="Total wall-time limit per task in seconds")
+    parser.add_argument("--memory-cap-gib", type=float, default=12.0, help="Combined worker memory cap; reduced when available RAM is lower")
+    parser.add_argument("--execution-order", choices=["adapter-first", "rotated"], default="adapter-first")
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--confirm")
     parser.add_argument(
@@ -1045,6 +1080,9 @@ def main() -> int:
         host_profile_sha256=(str(host_profile["sha256"]) if host_profile else None),
         host_settings=host_settings,
         repeats=args.repeats,
+        timeout_seconds=args.timeout,
+        memory_cap_gib=args.memory_cap_gib,
+        execution_order=args.execution_order,
     )
     plan = {
         "workspace_manifest_sha256": sha256_file(root / "workspace_manifest.json"),
@@ -1073,7 +1111,13 @@ def main() -> int:
     if args.validate_plans:
         validated: list[dict[str, Any]] = []
         repository = root.resolve().parents[1]
-        for (pillar, _), command in zip(PILLARS, commands):
+        seen_reports = set()
+        for command in commands:
+            report = command[command.index("--report-dir") + 1]
+            if report in seen_reports:
+                continue  # One immutable specification per pillar, shared by stages.
+            seen_reports.add(report)
+            pillar = Path(report).name
             result = subprocess.run(
                 command,
                 check=True,

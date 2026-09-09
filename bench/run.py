@@ -68,6 +68,9 @@ from bench.benchmark_models import (
     STATUS_FAILED,
     STATUS_INTERRUPTED,
     STATUS_MEASURED,
+    STATUS_MEMORY_LIMIT,
+    STATUS_SKIPPED_MEMORY,
+    STATUS_SKIPPED_MEMORY_PREFLIGHT,
     STATUS_PENDING,
     STATUS_RUNNING,
     STATUS_SKIPPED,
@@ -536,11 +539,29 @@ class AdapterProcessError(RuntimeError):
         returncode: Optional[int] = None,
         stdout: str = "",
         stderr: str = "",
+        host_metrics: Optional[Mapping[str, Any]] = None,
     ):
         super().__init__(message)
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
+        self.host_metrics = dict(host_metrics or {})
+
+
+class AdapterMemoryLimit(AdapterProcessError):
+    """An allocation was refused or the process tree crossed its RSS budget."""
+
+
+def _is_memory_failure(returncode: int, stderr: str) -> bool:
+    # Do not call arbitrary crashes OOM. These are explicit allocator failures
+    # or Windows STATUS_NO_MEMORY / STATUS_COMMITMENT_LIMIT.
+    return (returncode & 0xFFFFFFFF) in {0xC0000017, 0xC000012D} or any(
+        marker in stderr
+        for marker in (
+            "MemoryError", "std::bad_alloc", "cannot allocate memory",
+            "Cannot allocate memory", "Failed to allocate memory",
+        )
+    )
 
 
 class AdapterTimeout(TimeoutError):
@@ -627,13 +648,14 @@ def _run_process_command(
     environment: Optional[Mapping[str, str]] = None,
     sample_interval: float = 0.05,
     timeout: Optional[float] = None,
+    memory_limit_bytes: Optional[int] = None,
     stop_requested: Optional[Callable[[], bool]] = None,
     termination_grace: float = 3.0,
     progress_callback: Optional[Callable[[Mapping[str, Any]], None]] = None,
     progress_interval: float = 30.0,
 ) -> Tuple[str, str, Dict[str, Any]]:
     started = time.perf_counter()
-    tree = ProcessTree(command, environment=environment)
+    tree = ProcessTree(command, environment=environment, memory_limit_bytes=memory_limit_bytes)
     process = tree.process
     try:
         ps_process = psutil.Process(process.pid)
@@ -738,6 +760,12 @@ def _run_process_command(
         )
         host_metrics = {
             "host_wall_time_sec": elapsed,
+            "worker_memory_limit_bytes": memory_limit_bytes,
+            "worker_memory_limit_method": (
+                None if memory_limit_bytes is None else
+                "windows_job_tree_committed_bytes" if os.name == "nt" else
+                "sampled_process_tree_rss"
+            ),
             "host_peak_rss_bytes": peak_rss,
             "worker_lifetime_peak_rss_bytes": worker_lifetime_peak_rss or None,
             "calculation_rss_poll_count": calculation_poll_count,
@@ -786,6 +814,11 @@ def _run_process_command(
                 sampled_cpu = _safe_cpu_time(ps_process)
                 if sampled_cpu is not None:
                     last_cpu = sampled_cpu
+                if memory_limit_bytes is not None and sampled_rss > memory_limit_bytes:
+                    raise AdapterMemoryLimit(
+                        f"Adapter {adapter_name} process-tree RSS exceeded "
+                        f"the {memory_limit_bytes} byte worker budget"
+                    )
 
             now = time.perf_counter()
             elapsed = now - started
@@ -821,32 +854,17 @@ def _run_process_command(
                         else "startup_or_warmup"
                     ),
                 }
-            if (
-                timeout is not None
-                and ready_elapsed is not None
-                and ready_elapsed >= timeout
-            ):
-                partial_wall, partial_cpu = partial_samples()
-                raise AdapterTimeout(
-                    adapter_name,
-                    timeout,
-                    ready_elapsed,
-                    process.pid,
-                    phase="prepared_calculation_region",
-                    partial_duration_samples_sec=partial_wall,
-                    partial_cpu_time_samples_sec=partial_cpu,
-                )
-            if timeout is not None and ready_elapsed is None and elapsed >= timeout:
-                # Operational safety for import/preparation/warm-up hangs. The
-                # progress phase makes clear that this is not a calculation
-                # timeout and the record remains censored.
+            if timeout is not None and elapsed >= timeout:
+                # One deadline includes import, preparation, warmup, calibration,
+                # all observation windows and serialization. worker_ready never
+                # resets it; this is not a per-native-call censor bound.
                 partial_wall, partial_cpu = partial_samples()
                 raise AdapterTimeout(
                     adapter_name,
                     timeout,
                     elapsed,
                     process.pid,
-                    phase="startup_or_warmup",
+                    phase="whole_task",
                     partial_duration_samples_sec=partial_wall,
                     partial_cpu_time_samples_sec=partial_cpu,
                 )
@@ -876,7 +894,7 @@ def _run_process_command(
                 partial_duration_samples_sec=partial_wall,
                 partial_cpu_time_samples_sec=partial_cpu,
             )
-        if isinstance(exc, (AdapterTimeout, AdapterInterrupted)):
+        if isinstance(exc, (AdapterTimeout, AdapterInterrupted, AdapterMemoryLimit)):
             exc.host_metrics = snapshot_host_metrics()
             exc.stdout = "".join(stdout_lines)[-65536:]
             exc.stderr = "".join(stderr_lines)[-65536:]
@@ -889,11 +907,13 @@ def _run_process_command(
 
     host_metrics = snapshot_host_metrics()
     if process.returncode != 0:
-        raise AdapterProcessError(
+        error_type = AdapterMemoryLimit if _is_memory_failure(process.returncode, stderr) else AdapterProcessError
+        raise error_type(
             f"Adapter {adapter_name} failed with code {process.returncode}: {stderr}\n{stdout}",
             returncode=process.returncode,
             stdout=stdout,
             stderr=stderr,
+            host_metrics=host_metrics,
         )
     return stdout, stderr, host_metrics
 
@@ -920,6 +940,7 @@ def run_adapter_process(
     intensity_max: Optional[float] = None,
     sample_interval: float = 0.05,
     timeout: Optional[float] = None,
+    memory_limit_bytes: Optional[int] = None,
     families: Optional[List[str]] = None,
     benchmark_workload: Optional[str] = None,
     iterations: int = 5,
@@ -1053,6 +1074,7 @@ def run_adapter_process(
         environment=environment,
         sample_interval=sample_interval,
         timeout=timeout,
+        memory_limit_bytes=memory_limit_bytes,
         stop_requested=stop_requested,
         termination_grace=termination_grace,
         progress_callback=progress_callback,
@@ -1177,6 +1199,7 @@ def run_adapter_process(
     for key in (
         "worker_lifetime_peak_rss_bytes", "calculation_rss_poll_count",
         "calculation_windows_with_rss_poll", "host_process_scope", "phase_rss_method",
+        "worker_memory_limit_bytes", "worker_memory_limit_method",
     ):
         metrics[key] = host.get(key)
     return payload, metrics
@@ -1323,6 +1346,12 @@ def run_qc_checks(run_id: str, records: List[Dict[str, Any]]) -> Dict[str, Any]:
                     family=str(record.get("family") or "") or None,
                 )
             )
+        elif status in {STATUS_MEMORY_LIMIT, STATUS_SKIPPED_MEMORY_PREFLIGHT, STATUS_SKIPPED_MEMORY}:
+            issues.append(_issue_row(
+                run_id=run_id, record=record, issue_type=status,
+                severity="warning", metric="task_status", value=status,
+                details=str(record.get("error") or "Excluded by the memory policy; not measured."),
+            ))
 
     for record in evaluated:
         duration = _safe_float(record.get("duration_sec"))
@@ -1483,6 +1512,7 @@ def save_summaries(
     status_counts = ledger.status_counts() if ledger is not None else {}
     guardrail_decisions = ledger.guardrail_decisions() if ledger is not None else []
     timeout_cutoffs = ledger.timeout_cutoffs() if ledger is not None else []
+    memory_cutoffs = ledger.memory_cutoffs() if ledger is not None else []
     host_observations: list[dict[str, Any]] = []
     observation_path = report_dir / "host_observations.json"
     if observation_path.is_file():
@@ -1503,6 +1533,7 @@ def save_summaries(
         "status_counts": status_counts,
         "guardrail_decisions": guardrail_decisions,
         "timeout_cutoffs": timeout_cutoffs,
+        "memory_cutoffs": memory_cutoffs,
         "qc_summary": qc["summary"],
     }
     atomic_write_json(report_dir / "run_meta.json", meta)
@@ -3935,6 +3966,40 @@ def _timeout_cutoff_complexity(task: TaskSpec) -> Tuple[str, int]:
     return "image_voxels", int(task.image_voxels)
 
 
+def _memory_scope(task: TaskSpec) -> str:
+    return fingerprint([task.adapter, task.workload_key, task.guardrail_group])
+
+
+def _activate_memory_cutoff(ledger: BenchmarkLedger, task: TaskSpec, reason: str) -> None:
+    ledger.activate_memory_cutoff(
+        scope_key=_memory_scope(task), adapter=task.adapter,
+        workload_key=task.workload_key, guardrail_group=task.guardrail_group,
+        complexity_metric="image_voxels", cutoff_complexity=task.image_voxels,
+        reason=reason, evidence_task_id=task.task_id,
+    )
+
+
+def _reconcile_memory_cutoffs(ledger: BenchmarkLedger, tasks_by_id: Mapping[str, TaskSpec]) -> None:
+    # Terminal records are committed first. Recover the boundary after a crash
+    # in the small interval before its separate cutoff transaction.
+    for row in ledger.task_rows():
+        if row["status"] in {STATUS_MEMORY_LIMIT, STATUS_SKIPPED_MEMORY_PREFLIGHT}:
+            task = tasks_by_id.get(str(row["task_id"]))
+            if task is not None:
+                _activate_memory_cutoff(ledger, task, str(row["error"]))
+
+
+def _execution_tasks(tasks: Sequence[TaskSpec], adapters: Sequence[str], order: str,
+                     execute_adapters: Sequence[str]) -> List[TaskSpec]:
+    selected = [task for task in tasks if not execute_adapters or task.adapter in execute_adapters]
+    if order == "adapter-first":
+        # Keep immutable plan ordinals and append-only repeat extension intact.
+        # Screen each size ladder on repeat 1 before spending repeats 2 and 3.
+        ranks = {adapter: index for index, adapter in enumerate(adapters)}
+        selected.sort(key=lambda task: (ranks[task.adapter], task.repeat, task.image_voxels, task.ordinal))
+    return selected
+
+
 def _checkpoint(
     *,
     ledger: BenchmarkLedger,
@@ -3988,14 +4053,14 @@ def _print_ledger_progress(
     completed = len(terminal)
     remaining = max(0, total_tasks - completed)
     elapsed = time.perf_counter() - session_started
-    # Startup/warmup and the prepared calculation region have independent
-    # timeout clocks. Cap extrapolated task turnaround at their combined bound.
+    # Every worker has one total wall-time deadline.
     eta_estimate = estimate_pending_turnaround(
         rows,
         maximum_task_seconds=(
-            None if task_timeout_sec is None else 2.0 * float(task_timeout_sec)
+            None if task_timeout_sec is None else float(task_timeout_sec)
         ),
         timeout_cutoffs=ledger.timeout_cutoffs(),
+        memory_cutoffs=ledger.memory_cutoffs(),
     )
     estimate_basis = "unavailable"
     eta: Optional[float] = None
@@ -4149,6 +4214,7 @@ def _plan_benchmark_execution(
         timing_observations=args.timing_observations,
         capture_values=True,
         timeout_seconds=args.timeout,
+        execution_order=args.execution_order,
         keep_going=args.keep_going,
         task_plan_sha256=task_plan_fingerprint(tasks),
         runtime_profiles_sha256=_runtime_profiles_sha256(),
@@ -4238,12 +4304,15 @@ def _make_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--timeout",
         type=float,
-        default=None,
+        default=900.0,
         help=(
-            "Per-phase process-tree safety limit: one clock before worker-ready "
-            "and a fresh clock after worker-ready"
+            "Total task wall-time limit including startup, warmup, calibration "
+            "and measurements (default: 900 seconds)"
         ),
     )
+    parser.add_argument("--execution-order", choices=["adapter-first", "rotated"], default="adapter-first")
+    parser.add_argument("--execute-adapters", default=None,
+                        help="Execute only this comma-separated stage of the immutable all-adapter plan")
     parser.add_argument("--keep-going", action="store_true")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument(
@@ -4376,7 +4445,7 @@ def main(argv: List[str] | None = None) -> int:
             f"{timing_policy['measured_observations_per_process']} measured "
             "observations per process"
         )
-    if args.timeout is not None and args.timeout <= 0:
+    if args.timeout is not None and (not math.isfinite(args.timeout) or args.timeout <= 0):
         raise ValueError("timeout must be positive")
     if args.termination_grace < 0:
         raise ValueError("termination grace cannot be negative")
@@ -4434,6 +4503,9 @@ def main(argv: List[str] | None = None) -> int:
     adapters = _parse_csv(args.adapters)
     if not adapters:
         raise ValueError("at least one adapter is required")
+    execute_adapters = _parse_csv(args.execute_adapters)
+    if set(execute_adapters) - set(adapters):
+        raise ValueError("--execute-adapters must be a subset of --adapters")
     policy = GuardrailPolicy(
         enabled=args.enable_speed_truncation,
         baseline_adapter=args.guardrail_baseline.strip(),
@@ -4610,6 +4682,7 @@ def main(argv: List[str] | None = None) -> int:
             # before its baseline.
             _reconcile_guardrails(ledger, policy, guardrail_groups)
             _reconcile_timeout_cutoffs(ledger, policy, tasks_by_id)
+            _reconcile_memory_cutoffs(ledger, tasks_by_id)
             _print_ledger_progress(
                 ledger,
                 total_tasks=len(tasks),
@@ -4640,7 +4713,7 @@ def main(argv: List[str] | None = None) -> int:
 
             with _SignalStop() as stop:
                 try:
-                    for task in tasks:
+                    for task in _execution_tasks(tasks, adapters, args.execution_order, execute_adapters):
                         status = ledger.status(task.task_id)
                         if status in TERMINAL_STATUSES:
                             continue
@@ -4740,6 +4813,12 @@ def main(argv: List[str] | None = None) -> int:
                             prior_records=memory_history[memory_key],
                             policy=memory_policy,
                         )
+                        memory_decision = ledger.memory_cutoff(_memory_scope(task))
+                        memory_cutoff_applies = (
+                            memory_decision is not None
+                            and memory_decision["complexity_metric"] == "image_voxels"
+                            and task.image_voxels >= int(memory_decision["cutoff_complexity"])
+                        )
                         if (
                             timeout_decision is not None
                             and timeout_complexity_metric
@@ -4783,6 +4862,27 @@ def main(argv: List[str] | None = None) -> int:
                                 "is strictly above observed timeout boundary "
                                 f"{timeout_decision['cutoff_complexity']}."
                             )
+                            completed_since_checkpoint += 1
+                        elif memory_cutoff_applies or memory_preflight["memory_preflight_decision"] == "skip":
+                            memory_status = STATUS_SKIPPED_MEMORY if memory_cutoff_applies else STATUS_SKIPPED_MEMORY_PREFLIGHT
+                            reason = (
+                                f"Persisted memory cutoff: {memory_decision['reason']}"
+                                if memory_cutoff_applies else
+                                f"Estimated memory {memory_preflight['memory_estimate_bytes']} bytes "
+                                f"exceeds worker budget {memory_preflight['memory_budget_bytes']} bytes"
+                            )
+                            record = _terminal_record(task, run_id, memory_status, error=reason, policy_reason=reason)
+                            record.update(finish_task_power())
+                            record.update(memory_preflight)
+                            record.update({
+                                "memory_cutoff_complexity": int(memory_decision["cutoff_complexity"]) if memory_cutoff_applies else task.image_voxels,
+                                "memory_cutoff_complexity_metric": "image_voxels",
+                                "memory_cutoff_evidence_task_id": str(memory_decision["evidence_task_id"]) if memory_cutoff_applies else task.task_id,
+                            })
+                            ledger.mark_terminal(task.task_id, memory_status, record, error=reason)
+                            if not memory_cutoff_applies:
+                                _activate_memory_cutoff(ledger, task, reason)
+                            print(f"SKIPPED MEMORY {task.case_id} {task.adapter} {task.workload_key}: {reason}")
                             completed_since_checkpoint += 1
                         elif decision is not None and task.complexity > int(
                             decision["cutoff_complexity"]
@@ -4836,9 +4936,6 @@ def main(argv: List[str] | None = None) -> int:
                                 )
 
                                 def report_active(snapshot: Mapping[str, Any]) -> None:
-                                    ready_elapsed = _safe_float(
-                                        snapshot.get("ready_elapsed_sec")
-                                    )
                                     iteration_elapsed = _safe_float(
                                         snapshot.get("iteration_elapsed_sec")
                                     )
@@ -4854,9 +4951,7 @@ def main(argv: List[str] | None = None) -> int:
                                     timeout_text = "none"
                                     if args.timeout is not None:
                                         timeout_elapsed = (
-                                            ready_elapsed
-                                            if ready_elapsed is not None
-                                            else _safe_float(
+                                            _safe_float(
                                                 snapshot.get("host_elapsed_sec")
                                             )
                                             or 0.0
@@ -4902,6 +4997,7 @@ def main(argv: List[str] | None = None) -> int:
                                         intensity_min=task.intensity_min,
                                         intensity_max=task.intensity_max,
                                         timeout=args.timeout,
+                                        memory_limit_bytes=int(memory_preflight["memory_budget_bytes"]),
                                         families=list(task.scheduled_families),
                                         benchmark_workload=task.workload,
                                         iterations=task.timing_observations,
@@ -4975,6 +5071,22 @@ def main(argv: List[str] | None = None) -> int:
                                     error=str(exc),
                                 )
                                 print(f"UNSUPPORTED: {exc}")
+                            except AdapterMemoryLimit as exc:
+                                record = _terminal_record(task, run_id, STATUS_MEMORY_LIMIT, attempt=attempt, error=str(exc))
+                                record.update(finish_task_power())
+                                record.update(memory_preflight)
+                                record.update(exc.host_metrics)
+                                record.update({
+                                    "peak_rss_bytes": exc.host_metrics.get("host_peak_rss_bytes"),
+                                    "adapter_stdout_tail": exc.stdout[-65536:],
+                                    "adapter_stderr": exc.stderr[-65536:],
+                                    "memory_cutoff_complexity": task.image_voxels,
+                                    "memory_cutoff_complexity_metric": "image_voxels",
+                                    "memory_cutoff_evidence_task_id": task.task_id,
+                                })
+                                ledger.mark_terminal(task.task_id, STATUS_MEMORY_LIMIT, record, error=str(exc))
+                                _activate_memory_cutoff(ledger, task, str(exc))
+                                print(f"MEMORY LIMIT (not measured): {exc}")
                             except AdapterTimeout as exc:
                                 record = _terminal_record(
                                     task,
@@ -5079,6 +5191,10 @@ def main(argv: List[str] | None = None) -> int:
                                 )
                                 record.update(finish_task_power())
                                 record.update(memory_preflight)
+                                if isinstance(exc, AdapterProcessError):
+                                    record.update(exc.host_metrics)
+                                    record["adapter_stdout_tail"] = exc.stdout[-65536:]
+                                    record["adapter_stderr"] = exc.stderr[-65536:]
                                 ledger.mark_terminal(
                                     task.task_id,
                                     STATUS_FAILED,
@@ -5213,10 +5329,10 @@ def main(argv: List[str] | None = None) -> int:
                 counts = ledger.status_counts()
                 incomplete = counts.get(STATUS_PENDING, 0) + counts.get(
                     STATUS_RUNNING, 0
-                )
+                ) + counts.get(STATUS_INTERRUPTED, 0)
                 if incomplete:
-                    run_status = "interrupted"
-                elif counts.get(STATUS_FAILED, 0) or counts.get(STATUS_TIMED_OUT, 0):
+                    run_status = "stage_completed" if execute_adapters else "interrupted"
+                elif any(counts.get(status, 0) for status in (STATUS_FAILED, STATUS_TIMED_OUT, STATUS_MEMORY_LIMIT, STATUS_SKIPPED_MEMORY_PREFLIGHT)):
                     run_status = "completed_with_failures"
                 else:
                     run_status = "completed"

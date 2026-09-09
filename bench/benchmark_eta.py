@@ -42,6 +42,7 @@ class EtaEstimate:
     timeout_capped_predictions: int
     timeout_cutoff_predictions: int
     timeout_repeat_predictions: int
+    memory_cutoff_predictions: int = 0
 
     @property
     def basis(self) -> str:
@@ -64,7 +65,7 @@ class EtaEstimate:
         if self.timeout_capped_predictions:
             basis += (
                 f"; {self.timeout_capped_predictions} extrapolations capped at "
-                "the two-phase timeout bound"
+                "the total task timeout bound"
             )
         if self.timeout_cutoff_predictions:
             basis += (
@@ -76,6 +77,9 @@ class EtaEstimate:
                 f"; {self.timeout_repeat_predictions} exact repeats use observed "
                 "timeout turnaround"
             )
+        if self.memory_cutoff_predictions:
+            basis += f"; {self.memory_cutoff_predictions} pending tasks excluded by persisted memory cutoffs"
+        basis += "; future resource cutoffs are unknown; range is not a confidence interval"
         return basis
 
 
@@ -405,6 +409,7 @@ def estimate_pending_turnaround(
     now: float | None = None,
     maximum_task_seconds: float | None = None,
     timeout_cutoffs: Sequence[Mapping[str, Any]] = (),
+    memory_cutoffs: Sequence[Mapping[str, Any]] = (),
 ) -> EtaEstimate | None:
     """Estimate current-ledger wall time without borrowing incompatible runs."""
 
@@ -445,12 +450,17 @@ def estimate_pending_turnaround(
         key: _fit_power_model(items) for key, items in grouped.items()
     }
 
-    global_seconds = [observation.seconds for observation in observations]
     estimate = lower = upper = 0.0
     pending_count = exact_count = scoped_count = grouped_count = fallback_count = 0
     timeout_capped_count = 0
     timeout_cutoff_count = 0
     timeout_repeat_count = 0
+    memory_cutoff_count = 0
+    memory_by_scope = {
+        (str(item["adapter"]), str(item["workload_key"]), str(item["guardrail_group"])):
+        int(item["cutoff_complexity"])
+        for item in memory_cutoffs if item.get("complexity_metric") == "image_voxels"
+    }
     cutoff_by_scope = {
         (
             str(item.get("adapter") or ""),
@@ -480,6 +490,10 @@ def estimate_pending_turnaround(
             _field(row, "workload_key", spec.get("workload") or "")
         )
         scope = str(spec.get("guardrail_group") or "")
+        memory_boundary = memory_by_scope.get((adapter, workload, scope))
+        if memory_boundary is not None and int(spec.get("image_voxels") or 0) >= memory_boundary:
+            memory_cutoff_count += 1
+            continue
         cutoff = cutoff_by_scope.get((adapter, workload, scope))
         complexity = None
         if cutoff is not None:
@@ -524,9 +538,13 @@ def estimate_pending_turnaround(
                     grouped_count += 1
                 else:
                     group_observations = grouped.get((adapter, workload), [])
+                    if not group_observations:
+                        # Pictologics cannot predict a never-observed MEDimage
+                        # workload. With adapter stages this would produce a
+                        # deceptively short ETA for the entire remaining run.
+                        return None
                     prediction = _median_prediction(
                         [item.seconds for item in group_observations]
-                        or global_seconds
                     )
                     fallback_count += 1
 
@@ -573,6 +591,7 @@ def estimate_pending_turnaround(
         timeout_capped_predictions=timeout_capped_count,
         timeout_cutoff_predictions=timeout_cutoff_count,
         timeout_repeat_predictions=timeout_repeat_count,
+        memory_cutoff_predictions=memory_cutoff_count,
     )
 
 

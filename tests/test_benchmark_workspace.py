@@ -407,7 +407,7 @@ class BenchmarkWorkspaceTests(unittest.TestCase):
                 host_settings={"power_source": "AC Power"},
                 repeats=5,
             )
-        self.assertEqual(len(commands), 3)
+        self.assertEqual(len(commands), 6)
         for command in commands:
             self.assertIn("--extend-repeats", command)
             self.assertEqual(command[command.index("--repeats") + 1], "5")
@@ -431,7 +431,11 @@ class BenchmarkWorkspaceTests(unittest.TestCase):
             int(command[command.index("--project-task-offset") + 1])
             for command in commands
         ]
-        self.assertEqual(offsets, [0, 40, 100])
+        self.assertEqual(offsets, [0, 20, 50, 80, 90, 100])
+        self.assertEqual([command[command.index("--execute-adapters") + 1] for command in commands],
+                         ["pictologics"] * 3 + ["pyradiomics"] * 3)
+        self.assertTrue(all(command[command.index("--timeout") + 1] == "900.0" for command in commands))
+        self.assertTrue(all(command[command.index("--memory-cap-gib") + 1] == "12.0" for command in commands))
 
     def test_machine_id_rejects_path_components(self) -> None:
         with self.assertRaisesRegex(ValueError, "machine ID"):

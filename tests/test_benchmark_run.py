@@ -1811,7 +1811,7 @@ class BenchmarkRunnerTests(unittest.TestCase):
         self.assertEqual(record["task_status"], STATUS_FAILED)
         self.assertIn("peak RSS", record["error"])
 
-    def test_memory_estimate_never_prevents_a_task_launch(self) -> None:
+    def test_memory_estimate_prevents_unsafe_task_launch(self) -> None:
         self.make_dataset([1000])
 
         def fake(adapter, **kwargs):
@@ -1836,13 +1836,13 @@ class BenchmarkRunnerTests(unittest.TestCase):
                 ),
                 0,
             )
-            process.assert_called_once()
+            process.assert_not_called()
         with BenchmarkLedger(self.report / "benchmark.sqlite3") as ledger:
             record = ledger.records()[0]
-        self.assertEqual(record["task_status"], STATUS_MEASURED)
-        self.assertEqual(record["memory_preflight_decision"], "launch")
+        self.assertEqual(record["task_status"], run.STATUS_SKIPPED_MEMORY_PREFLIGHT)
+        self.assertEqual(record["memory_preflight_decision"], "skip")
         self.assertTrue(record["memory_estimate_exceeds_budget"])
-        self.assertTrue(record["success"])
+        self.assertFalse(record["success"])
 
     def test_generic_failure_never_activates_speed_truncation(self) -> None:
         self.make_dataset([1000, 8000])
@@ -2105,7 +2105,126 @@ class BenchmarkRunnerTests(unittest.TestCase):
                 termination_grace=0.1,
             )
         self.assertFalse(psutil.pid_exists(caught.exception.pid))
-        self.assertEqual(caught.exception.phase, "startup_or_warmup")
+        self.assertEqual(caught.exception.phase, "whole_task")
+
+    def test_worker_ready_does_not_reset_total_timeout(self) -> None:
+        code = (
+            "import json,time; time.sleep(0.6); "
+            "print('BENCH_EVENT '+json.dumps({'event':'worker_ready'}),flush=True); "
+            "time.sleep(30)"
+        )
+        with self.assertRaises(run.AdapterTimeout) as caught:
+            run._run_process_command([sys.executable, "-c", code], adapter_name="fake",
+                                     timeout=1.0, sample_interval=0.01)
+        self.assertEqual(caught.exception.censor_bound_scope, "whole_task_elapsed_wall_time")
+        self.assertGreater(caught.exception.host_metrics["adapter_event_count"], 0)
+        self.assertLess(caught.exception.elapsed_seconds, 1.5)
+
+    def test_measured_adapter_metrics_retain_enforced_memory_policy(self) -> None:
+        host = {"worker_memory_limit_bytes": 123456,
+                "worker_memory_limit_method": "windows_job_tree_committed_bytes"}
+        with (
+            mock.patch.object(run, "_env_python", return_value=Path(sys.executable)),
+            mock.patch.object(run, "_run_process_command", return_value=(json.dumps({"timing": {}}), "", host)) as process,
+        ):
+            _, measured = run.run_adapter_process("fake", image="image", mask="mask", memory_limit_bytes=123456)
+        self.assertEqual(process.call_args.kwargs["memory_limit_bytes"], 123456)
+        self.assertEqual(measured["worker_memory_limit_bytes"], 123456)
+        self.assertEqual(measured["worker_memory_limit_method"], host["worker_memory_limit_method"])
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows Job memory enforcement")
+    def test_windows_job_refuses_large_allocation_before_rss_poll(self) -> None:
+        with self.assertRaises(run.AdapterMemoryLimit) as caught:
+            run._run_process_command(
+                [sys.executable, "-c", "data = bytearray(256 * 1024**2)"],
+                adapter_name="memory-fixture", timeout=5,
+                memory_limit_bytes=96 * 1024**2, sample_interval=0.5,
+            )
+        self.assertIn("MemoryError", caught.exception.stderr)
+        self.assertEqual(caught.exception.host_metrics["worker_memory_limit_bytes"], 96 * 1024**2)
+        self.assertEqual(caught.exception.host_metrics["worker_memory_limit_method"], "windows_job_tree_committed_bytes")
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows Job memory enforcement")
+    def test_windows_job_memory_cap_is_shared_with_descendants(self) -> None:
+        child = "import time; data = bytearray(64 * 1024**2); print('allocated', flush=True); time.sleep(30)"
+        code = (
+            "import subprocess,sys; data = bytearray(64 * 1024**2); "
+            f"child = subprocess.Popen([sys.executable, '-c', {child!r}]); "
+            "sys.exit(child.wait())"
+        )
+        with self.assertRaises(run.AdapterMemoryLimit) as caught:
+            run._run_process_command([sys.executable, "-c", code], adapter_name="memory-tree",
+                                     memory_limit_bytes=144 * 1024**2, timeout=5)
+        self.assertIn("MemoryError", caught.exception.stderr)
+
+    def test_memory_failure_survives_restart_and_skips_equal_and_larger_series(self) -> None:
+        self.make_dataset([1000, 1000, 8000], synthetic_series=True)
+        def fake(adapter, **kwargs):
+            raise run.AdapterMemoryLimit("MemoryError: allocation refused", host_metrics={"host_peak_rss_bytes": 123456})
+        common = self.args("--adapters", "pictologics", "--workloads", "texture", "--keep-going")
+        patchers = self.stable_patchers(fake)
+        with patchers[0] as process, patchers[1], patchers[2], patchers[3]:
+            self.assertEqual(run.main(common), 0)
+            process.assert_called_once()
+            # Emulate a crash after the terminal record but before the boundary
+            # transaction, then ensure restart reconstructs evidence correctly.
+            with BenchmarkLedger(self.report / "benchmark.sqlite3") as ledger:
+                ledger.connection.execute("DELETE FROM memory_cutoffs")
+                ledger.connection.commit()
+            self.assertEqual(run.main([*common, "--resume"]), 0)
+            process.assert_called_once()
+        with BenchmarkLedger(self.report / "benchmark.sqlite3") as ledger:
+            self.assertEqual(ledger.status_counts()[run.STATUS_MEMORY_LIMIT], 1)
+            self.assertEqual(ledger.status_counts()[run.STATUS_SKIPPED_MEMORY], 2)
+            self.assertEqual(len(ledger.memory_cutoffs()), 1)
+            failed = next(r for r in ledger.records() if r["task_status"] == run.STATUS_MEMORY_LIMIT)
+            self.assertEqual(failed["peak_rss_bytes"], 123456)
+            self.assertIsNone(failed["duration_sec"])
+            ledger.verified_records_and_payloads()
+
+    def test_memory_cutoff_does_not_skip_unrelated_real_world_cases(self) -> None:
+        self.make_dataset([1000, 8000])
+        def fake(adapter, **kwargs):
+            raise run.AdapterMemoryLimit("MemoryError: allocation refused")
+        patchers = self.stable_patchers(fake)
+        with patchers[0] as process, patchers[1], patchers[2], patchers[3]:
+            self.assertEqual(run.main(self.args("--adapters", "pictologics", "--workloads", "texture")), 0)
+            self.assertEqual(process.call_count, 2)
+
+    def test_memory_cutoffs_do_not_cross_adapter_workload_or_mask(self) -> None:
+        self.make_dataset([1000, 8000], synthetic_series=True)
+        manifest_path = self.dataset / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["cases"][1]["mask_id"] = "M2"
+        manifest_path.write_text(json.dumps(manifest))
+        def fake(adapter, **kwargs):
+            raise run.AdapterMemoryLimit("MemoryError: allocation refused")
+        patchers = self.stable_patchers(fake)
+        with patchers[0] as process, patchers[1], patchers[2], patchers[3]:
+            self.assertEqual(run.main(self.args("--adapters", "pictologics,slow", "--workloads", "morphology,texture")), 0)
+            self.assertEqual(process.call_count, 8)
+        with BenchmarkLedger(self.report / "benchmark.sqlite3") as ledger:
+            self.assertEqual(len(ledger.memory_cutoffs()), 8)
+
+    def test_adapter_stages_resume_the_same_ledger_without_repeating_work(self) -> None:
+        self.make_dataset([8000, 1000], synthetic_series=True)
+        calls = []
+        def fake(adapter, **kwargs):
+            calls.append((adapter, Path(kwargs["image"]).name))
+            self.assertGreater(kwargs["memory_limit_bytes"], 0)
+            return adapter_payload(adapter, kwargs["families"], benchmark_workload=kwargs["benchmark_workload"]), metrics(1.0)
+        common = self.args("--adapters", "pictologics,slow", "--workloads", "texture")
+        patchers = self.stable_patchers(fake)
+        with patchers[0], patchers[1], patchers[2], patchers[3]:
+            self.assertEqual(run.main([*common, "--execute-adapters", "pictologics"]), 0)
+            first_spec = json.loads((self.report / "run_spec.json").read_text())
+            self.assertEqual(run.main([*common, "--execute-adapters", "pictologics", "--resume"]), 0)
+            self.assertEqual(run.main([*common, "--execute-adapters", "slow", "--resume"]), 0)
+            self.assertEqual(first_spec, json.loads((self.report / "run_spec.json").read_text()))
+        self.assertEqual([a for a, _ in calls], ["pictologics", "pictologics", "slow", "slow"])
+        self.assertIn("case-2", calls[0][1])  # Smaller input runs first.
+        with BenchmarkLedger(self.report / "benchmark.sqlite3") as ledger:
+            self.assertEqual(ledger.status_counts()[STATUS_MEASURED], 4)
 
     def test_process_timeout_reaps_descendant_process(self) -> None:
         child_pid_path = self.root / "child.pid"
@@ -2154,7 +2273,7 @@ class BenchmarkRunnerTests(unittest.TestCase):
                 sample_interval=0.01,
                 termination_grace=0.1,
             )
-        self.assertEqual(caught.exception.phase, "prepared_calculation_region")
+        self.assertEqual(caught.exception.phase, "whole_task")
         self.assertEqual(caught.exception.partial_duration_samples_sec, (0.0125,))
         self.assertEqual(caught.exception.partial_cpu_time_samples_sec, (0.01,))
 

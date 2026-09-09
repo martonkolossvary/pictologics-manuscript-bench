@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Any, Iterable, Mapping
 
 
@@ -44,9 +45,9 @@ class MemoryPreflightPolicy:
             raise ValueError("memory reserve cannot be negative")
         if self.user_cap_bytes is not None and int(self.user_cap_bytes) <= 0:
             raise ValueError("memory cap must be positive")
-        if float(self.safety_factor) < 1.0:
+        if not math.isfinite(self.safety_factor) or float(self.safety_factor) < 1.0:
             raise ValueError("memory safety factor must be >= 1")
-        if float(self.empirical_growth_exponent) < 1.0:
+        if not math.isfinite(self.empirical_growth_exponent) or float(self.empirical_growth_exponent) < 1.0:
             raise ValueError("empirical growth exponent must be >= 1")
 
     def multiplier(self, adapter: str) -> float:
@@ -59,7 +60,11 @@ class MemoryPreflightPolicy:
     def to_dict(self) -> dict[str, Any]:
         return {
             "policy_id": "fixed_overhead_incremental_empirical_upper",
-            "mode": "advisory_only",
+            "mode": "preflight_gate_and_worker_limit",
+            "worker_limit_windows": "job_tree_committed_bytes",
+            "worker_limit_posix": "sampled_tree_rss_50ms_may_overshoot",
+            "cutoff_scope": ["adapter", "workload", "guardrail_group"],
+            "cutoff_includes_equal_size_repeats": True,
             "budget_fraction": self.budget_fraction,
             "reserve_bytes": self.reserve_bytes,
             "user_cap_bytes": self.user_cap_bytes,
@@ -80,8 +85,8 @@ class MemoryPreflightPolicy:
                 "cross_stratum_upper": ["adapter", "workload"],
             },
             "interpretation": (
-                "advisory estimate only; never gates execution and is never "
-                "reported as measured memory"
+                "estimates above budget prevent launch; estimates and policy "
+                "skips are never reported as measured memory or native OOM"
             ),
         }
 
@@ -177,7 +182,7 @@ def evaluate_memory_preflight(
     )
     return {
         "memory_preflight_policy_id": "fixed_overhead_incremental_empirical_upper",
-        "memory_preflight_enabled": False,
+        "memory_preflight_enabled": True,
         "input_uncompressed_bytes": int(input_uncompressed_bytes),
         "memory_static_estimate_bytes": static_estimate,
         "memory_linear_static_estimate_bytes": linear_static_estimate,
@@ -195,7 +200,7 @@ def evaluate_memory_preflight(
         "memory_total_bytes": int(total_bytes),
         "memory_reserve_bytes": reserve,
         "memory_budget_bytes": budget,
-        "memory_preflight_decision": "launch",
+        "memory_preflight_decision": "skip" if estimate > budget else "launch",
         "memory_estimate_exceeds_budget": estimate > budget,
     }
 
