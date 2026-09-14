@@ -410,6 +410,7 @@ def estimate_pending_turnaround(
     maximum_task_seconds: float | None = None,
     timeout_cutoffs: Sequence[Mapping[str, Any]] = (),
     memory_cutoffs: Sequence[Mapping[str, Any]] = (),
+    skip_repeated_timeouts: bool = False,
 ) -> EtaEstimate | None:
     """Estimate current-ledger wall time without borrowing incompatible runs."""
 
@@ -490,6 +491,9 @@ def estimate_pending_turnaround(
             _field(row, "workload_key", spec.get("workload") or "")
         )
         scope = str(spec.get("guardrail_group") or "")
+        if skip_repeated_timeouts and timeout_exact.get((case_id, adapter, workload)):
+            timeout_cutoff_count += 1
+            continue
         memory_boundary = memory_by_scope.get((adapter, workload, scope))
         if memory_boundary is not None and int(spec.get("image_voxels") or 0) >= memory_boundary:
             memory_cutoff_count += 1

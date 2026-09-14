@@ -1698,6 +1698,24 @@ class BenchmarkRunnerTests(unittest.TestCase):
         self.assertEqual(timed[0]["censor_bound_scope"], "calculation_elapsed_wall_time")
         self.assertFalse(timed[0]["success"])
 
+    def test_timeout_skips_identical_repeats_but_option_can_retain_them(self) -> None:
+        self.make_dataset([1000], synthetic_series=True)
+        def fake(adapter, **kwargs):
+            raise run.AdapterTimeout(adapter,5.0,5.1,999999)
+        for retain, expected_calls in [(False,1),(True,3)]:
+            report = self.root / ('retain-timeouts' if retain else 'skip-timeouts')
+            patchers=self.stable_patchers(fake)
+            with patchers[0] as process, patchers[1], patchers[2], patchers[3]:
+                args=self.args('--adapters','pictologics','--workloads','texture',
+                               '--timeout','5','--repeats','3','--extend-repeats','--resume',
+                               '--report-dir',str(report),'--keep-going')
+                if retain:args.append('--repeat-timeouts')
+                self.assertEqual(run.main(args),0)
+                self.assertEqual(process.call_count,expected_calls)
+            with BenchmarkLedger(report/'benchmark.sqlite3') as ledger:
+                self.assertEqual(ledger.status_counts().get(STATUS_TIMED_OUT),expected_calls)
+                self.assertEqual(ledger.status_counts().get(STATUS_SKIPPED_TIMEOUT,0),3-expected_calls)
+
     def test_timeout_cutoff_applies_to_the_baseline_adapter(self) -> None:
         self.make_dataset([1000, 8000], synthetic_series=True)
         calls = []

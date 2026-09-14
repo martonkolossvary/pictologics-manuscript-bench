@@ -11,6 +11,7 @@ class GuardrailPolicy:
     skip_ratio: float = 1000.0
     minimum_slow_observations: int = 1
     truncate_on_timeout: bool = True
+    skip_repeated_timeouts: bool = True
 
     def __post_init__(self) -> None:
         if not self.baseline_adapter.strip():
@@ -33,6 +34,7 @@ class GuardrailPolicy:
             },
             "timeout_cutoff": {
                 "enabled": self.truncate_on_timeout,
+                "skip_identical_repeats": self.skip_repeated_timeouts,
                 "strictly_larger_only": True,
                 "complexity_metric": "image_voxels",
                 "scope_dimensions": ["adapter", "workload", "guardrail_group"],

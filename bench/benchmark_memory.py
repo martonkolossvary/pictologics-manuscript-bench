@@ -8,6 +8,8 @@ from typing import Any, Iterable, Mapping
 
 
 GIB = 1024**3
+MEMORY_POLICY_ID = "nearest_size_scoped_incremental_v2"
+LEGACY_MEMORY_POLICY_ID = "fixed_overhead_incremental_empirical_upper"
 
 
 @dataclass(frozen=True)
@@ -59,7 +61,7 @@ class MemoryPreflightPolicy:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "policy_id": "fixed_overhead_incremental_empirical_upper",
+            "policy_id": MEMORY_POLICY_ID,
             "mode": "preflight_gate_and_worker_limit",
             "worker_limit_windows": "job_tree_committed_bytes",
             "worker_limit_posix": "sampled_tree_rss_50ms_may_overshoot",
@@ -82,8 +84,10 @@ class MemoryPreflightPolicy:
             "adapter_input_multipliers": dict(self.adapter_input_multipliers),
             "empirical_scope": {
                 "primary": ["adapter", "workload", "guardrail_group"],
-                "cross_stratum_upper": ["adapter", "workload"],
+                "cross_stratum_upper": None,
             },
+            "empirical_anchor": "largest_observed_input_not_above_target_else_smallest",
+            "empirical_baseline": "peak_at_smallest_observed_input_in_same_scope",
             "interpretation": (
                 "estimates above budget prevent launch; estimates and policy "
                 "skips are never reported as measured memory or native OOM"
@@ -133,11 +137,16 @@ def evaluate_memory_preflight(
         linear_static_estimate,
         quadratic_static_estimate or 0,
     )
-    observations: list[tuple[int, int, bool]] = []
+    observations: list[tuple[int, int]] = []
     for record in prior_records:
         if record.get("task_status") != "measured":
             continue
         if record.get("adapter") != adapter or record.get("workload") != workload_key:
+            continue
+        # Different masks and patients need not have comparable ROI/bounding-box
+        # memory even at the same image volume. The hard worker cap and static
+        # bounds protect a new stratum until it has its own measurements.
+        if record.get("guardrail_group") != guardrail_group:
             continue
         previous_input = record.get("input_uncompressed_bytes")
         observed_peak = record.get("host_peak_rss_bytes") or record.get(
@@ -150,38 +159,43 @@ def evaluate_memory_preflight(
             continue
         if previous_input <= 0 or observed_peak <= 0:
             continue
-        observations.append(
-            (
-                previous_input,
-                observed_peak,
-                record.get("guardrail_group") == guardrail_group,
-            )
-        )
+        observations.append((previous_input, observed_peak))
 
     empirical_estimate = None
     empirical_baseline = None
     empirical_projected_increment = None
+    empirical_anchor_input = None
+    empirical_anchor_peak = None
     if observations:
-        empirical_baseline = min(peak for _, peak, _ in observations)
-        projected_increments = []
-        for previous_input, observed_peak, _ in observations:
-            scale = max(1.0, int(input_uncompressed_bytes) / previous_input)
-            observed_increment = max(0, observed_peak - empirical_baseline)
-            projected_increments.append(
-                observed_increment
-                * scale ** float(policy.empirical_growth_exponent)
+        peaks_by_input: dict[int, int] = {}
+        for previous_input, observed_peak in observations:
+            peaks_by_input[previous_input] = max(
+                peaks_by_input.get(previous_input, 0), observed_peak
             )
-        empirical_projected_increment = int(max(projected_increments))
+        smallest_input = min(peaks_by_input)
+        empirical_baseline = peaks_by_input[smallest_input]
+        lower_inputs = [size for size in peaks_by_input if size <= input_uncompressed_bytes]
+        empirical_anchor_input = max(lower_inputs) if lower_inputs else smallest_input
+        empirical_anchor_peak = peaks_by_input[empirical_anchor_input]
+        # Extrapolate only from the closest smaller measured size, never from
+        # every tiny worker. At 32^3 -> 256^3 the old max-of-all rule magnified
+        # ~1 MiB of startup noise by ~17,378, rejecting feasible calculations.
+        # Replicates at one size define an upper peak, not a volume-growth slope.
+        scale = max(1.0, int(input_uncompressed_bytes) / empirical_anchor_input)
+        increment = max(0, empirical_anchor_peak - empirical_baseline)
+        empirical_projected_increment = int(
+            increment * scale ** float(policy.empirical_growth_exponent)
+        )
         empirical_estimate = int(
-            empirical_baseline
-            + policy.safety_factor * empirical_projected_increment
+            max(empirical_anchor_peak, empirical_baseline
+                + policy.safety_factor * increment * scale ** float(policy.empirical_growth_exponent))
         )
     estimate = max(
         static_estimate,
         empirical_estimate if empirical_estimate is not None else 0,
     )
     return {
-        "memory_preflight_policy_id": "fixed_overhead_incremental_empirical_upper",
+        "memory_preflight_policy_id": MEMORY_POLICY_ID,
         "memory_preflight_enabled": True,
         "input_uncompressed_bytes": int(input_uncompressed_bytes),
         "memory_static_estimate_bytes": static_estimate,
@@ -191,9 +205,9 @@ def evaluate_memory_preflight(
         "memory_empirical_baseline_bytes": empirical_baseline,
         "memory_empirical_projected_increment_bytes": empirical_projected_increment,
         "memory_empirical_observation_count": len(observations),
-        "memory_empirical_same_scope_observation_count": sum(
-            1 for _, _, same_scope in observations if same_scope
-        ),
+        "memory_empirical_same_scope_observation_count": len(observations),
+        "memory_empirical_anchor_input_bytes": empirical_anchor_input,
+        "memory_empirical_anchor_peak_bytes": empirical_anchor_peak,
         "memory_empirical_growth_exponent": float(policy.empirical_growth_exponent),
         "memory_estimate_bytes": estimate,
         "memory_available_bytes": int(available_bytes),

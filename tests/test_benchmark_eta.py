@@ -384,6 +384,17 @@ def test_eta_uses_observed_timeout_turnaround_for_an_exact_repeat() -> None:
     assert estimate.timeout_repeat_predictions == 1
 
 
+def test_eta_omits_identical_timeout_repeats_under_revised_policy() -> None:
+    rows=[_row(ordinal=1,case_id='small',voxels=1000,status='measured',started=0,finished=10),
+          _row(ordinal=2,case_id='large',voxels=8000,status='timed_out_censored',started=10,finished=910),
+          _row(ordinal=3,case_id='large',voxels=8000,status='pending')]
+    estimate=estimate_pending_turnaround(rows,skip_repeated_timeouts=True)
+    assert estimate is not None
+    assert estimate.seconds==0
+    assert estimate.timeout_cutoff_predictions==1
+    assert estimate.timeout_repeat_predictions==0
+
+
 def test_eta_excludes_equal_and_larger_memory_cutoff_tasks() -> None:
     rows = [
         _row(ordinal=1, case_id="small", voxels=1000, status="measured", started=10, finished=20),

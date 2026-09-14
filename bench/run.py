@@ -1534,6 +1534,7 @@ def save_summaries(
         "guardrail_decisions": guardrail_decisions,
         "timeout_cutoffs": timeout_cutoffs,
         "memory_cutoffs": memory_cutoffs,
+        "protocol_amendments": ledger.protocol_amendments() if ledger is not None else [],
         "qc_summary": qc["summary"],
     }
     atomic_write_json(report_dir / "run_meta.json", meta)
@@ -2327,7 +2328,9 @@ def _benchmark_execution_sources(adapters: Sequence[str]) -> Dict[str, str]:
     return sources
 
 
-def _benchmark_sources_sha256(adapters: Sequence[str]) -> str:
+def _benchmark_sources_sha256(
+    adapters: Sequence[str], *, execution_files: Optional[Mapping[str, str]] = None
+) -> str:
     controller_environment = {
         "python": platform.python_version(),
         "implementation": platform.python_implementation(),
@@ -2341,7 +2344,8 @@ def _benchmark_sources_sha256(adapters: Sequence[str]) -> str:
     }
     return fingerprint(
         {
-            "execution_files": _benchmark_execution_sources(adapters),
+            "execution_files": (dict(execution_files) if execution_files is not None
+                                else _benchmark_execution_sources(adapters)),
             "controller_environment": controller_environment,
         }
     )
@@ -3676,6 +3680,7 @@ def _verify_committed_payloads(
 ) -> int:
     """Reject a resume if an authoritative measured payload is missing or altered."""
     verified = 0
+    origins = ledger.measurement_origins()
     for row in ledger.task_rows():
         if str(row["status"]) != STATUS_MEASURED:
             continue
@@ -3712,7 +3717,7 @@ def _verify_committed_payloads(
             )
         if (
             benchmark.get("task_id") != task_id
-            or benchmark.get("run_fingerprint") != run_fingerprint
+            or benchmark.get("run_fingerprint") != origins.get(task_id, run_fingerprint)
             or benchmark.get("status") != STATUS_MEASURED
             or record != stored_record
         ):
@@ -4054,6 +4059,7 @@ def _print_ledger_progress(
     remaining = max(0, total_tasks - completed)
     elapsed = time.perf_counter() - session_started
     # Every worker has one total wall-time deadline.
+    stored_protocol = json.loads(ledger.metadata_value("run_spec_json") or "{}")
     eta_estimate = estimate_pending_turnaround(
         rows,
         maximum_task_seconds=(
@@ -4061,6 +4067,7 @@ def _print_ledger_progress(
         ),
         timeout_cutoffs=ledger.timeout_cutoffs(),
         memory_cutoffs=ledger.memory_cutoffs(),
+        skip_repeated_timeouts=bool(stored_protocol.get("guardrail", {}).get("timeout_cutoff", {}).get("skip_identical_repeats", False)),
     )
     estimate_basis = "unavailable"
     eta: Optional[float] = None
@@ -4315,6 +4322,8 @@ def _make_parser() -> argparse.ArgumentParser:
                         help="Execute only this comma-separated stage of the immutable all-adapter plan")
     parser.add_argument("--keep-going", action="store_true")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--repeat-timeouts", action="store_true",
+                        help="Retry identical timed-out cases in later repeats instead of skipping them")
     parser.add_argument(
         "--extend-repeats",
         action="store_true",
@@ -4512,6 +4521,7 @@ def main(argv: List[str] | None = None) -> int:
         skip_ratio=args.guardrail_skip_ratio,
         minimum_slow_observations=args.guardrail_min_observations,
         truncate_on_timeout=not args.no_truncate_on_timeout,
+        skip_repeated_timeouts=not args.repeat_timeouts,
     )
     memory_policy = MemoryPreflightPolicy(
         budget_fraction=args.memory_budget_fraction,
@@ -4795,6 +4805,10 @@ def main(argv: List[str] | None = None) -> int:
                             if policy.truncate_on_timeout
                             else None
                         )
+                        exact_timeout = (ledger.exact_timeout(task.case_id, task.adapter, task.workload_key)
+                                         if policy.truncate_on_timeout and policy.skip_repeated_timeouts else None)
+                        if exact_timeout is not None:
+                            timeout_decision = exact_timeout
                         memory_key = (
                             task.adapter,
                             task.workload_key,
@@ -4823,15 +4837,15 @@ def main(argv: List[str] | None = None) -> int:
                             timeout_decision is not None
                             and timeout_complexity_metric
                             == str(timeout_decision["complexity_metric"])
-                            and timeout_complexity
-                            > int(timeout_decision["cutoff_complexity"])
+                            and (timeout_complexity > int(timeout_decision["cutoff_complexity"])
+                                 or exact_timeout is not None)
                         ):
                             reason = str(timeout_decision["reason"])
                             record = _terminal_record(
                                 task,
                                 run_id,
                                 STATUS_SKIPPED_TIMEOUT,
-                                error=f"Skipped above persisted timeout cutoff: {reason}",
+                                error=f"Skipped by persisted timeout policy: {reason}",
                                 policy_reason=reason,
                             )
                             record.update(finish_task_power())
@@ -4859,7 +4873,7 @@ def main(argv: List[str] | None = None) -> int:
                                 f"SKIPPED TIMEOUT CUTOFF {task.case_id} "
                                 f"{task.adapter} {task.workload_key}: "
                                 f"{timeout_complexity_metric}={timeout_complexity} "
-                                "is strictly above observed timeout boundary "
+                                "is covered by the observed timeout policy at "
                                 f"{timeout_decision['cutoff_complexity']}."
                             )
                             completed_since_checkpoint += 1

@@ -19,7 +19,14 @@ are skipped. Different masks/configurations and unrelated real-world patients
 remain eligible. Estimated skips, actual allocation failures and cutoff skips
 are distinguishable in the ledger and reports; none is a measured runtime.
 
-Use a fresh result directory. The old schema-14 run at
+The corrected predictor uses measurements from the same configuration and the
+nearest measured image size. It does not extrapolate tiny differences in
+interpreter memory across distant sizes or unrelated patients. Existing
+schema-15 runs created with the old predictor require the explicit recovery in
+[memory_policy_recovery.md](memory_policy_recovery.md) before resuming under
+the corrected source.
+
+For a new experiment, use a fresh result directory. The old schema-14 run at
 `C:\BenchResults\full-2dbd2dd-20260908` has a different timeout and resource
 protocol and must not be resumed under this source. Its measurements remain
 available as separate historical evidence.
@@ -63,8 +70,10 @@ resource cutoffs reduce expensive attempts. In the old run, median MEDimage
 227 seconds respectively. Five native calls (warmup, calibration and three
 measurements) imply about 20.7 and 18.9 minutes before overhead. Many such tasks
 will therefore time out under this 15-minute policy and suppress larger images
-in their exact series. The same-size timeout repeats remain eligible; memory
-failures additionally suppress equal-sized repeats.
+in their exact series. After a timeout, remaining identical case/workload repeats
+are now skipped as well. Different same-sized cases remain eligible. Successful
+tasks retain all three fresh-process repeats. To retain repeated timeout attempts
+when creating a new run, pass `--repeat-timeouts`; this is fingerprint-bound.
 
 Fifteen minutes is a per-worker ceiling, not a project deadline. A reliable
 completion date needs observations under the new policy, particularly from the

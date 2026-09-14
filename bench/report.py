@@ -468,6 +468,7 @@ def _ledger_record_loader(
         run_status = ledger.metadata_value("run_status")
         run_fingerprint = ledger.metadata_value("run_fingerprint")
         run_spec_json = ledger.metadata_value("run_spec_json")
+        amendments = ledger.protocol_amendments()
 
     if not run_spec_json:
         raise RunIntegrityError("benchmark ledger has no run_spec_json")
@@ -516,6 +517,10 @@ def _ledger_record_loader(
         ],
         "run_fingerprint": run_fingerprint,
         "run_spec": run_spec,
+        "protocol_amendments": amendments,
+        "verified_protocol_fingerprints": [run_fingerprint] + [
+            item["old_fingerprint"] for item in amendments
+        ],
     }
 
 
@@ -589,8 +594,9 @@ def load_report_records(
             raise ValueError("Host observation history must be a list of objects")
         host_observations = [dict(item) for item in decoded]
         run_fingerprint = metadata.get("run_fingerprint")
+        allowed_fingerprints = set(metadata.get("verified_protocol_fingerprints") or [run_fingerprint])
         if run_fingerprint and any(
-            item.get("run_fingerprint") != run_fingerprint
+            item.get("run_fingerprint") not in allowed_fingerprints
             for item in host_observations
         ):
             raise ValueError("Host observation history has a run fingerprint mismatch")

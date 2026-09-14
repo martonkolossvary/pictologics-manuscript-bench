@@ -798,6 +798,7 @@ def build_commands(
     timeout_seconds: float = 900.0,
     memory_cap_gib: float = 12.0,
     execution_order: str = "adapter-first",
+    repeat_timeouts: bool = False,
 ) -> list[list[str]]:
     if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
         raise ValueError("timeout must be finite and positive")
@@ -869,6 +870,8 @@ def build_commands(
         ]
         if machine_label:
             command.extend(["--machine-label", str(machine_label)])
+        if repeat_timeouts:
+            command.append("--repeat-timeouts")
         if cpu_model:
             command.extend(["--cpu-model", str(cpu_model)])
         if cpu_base_ghz is not None:
@@ -1001,6 +1004,7 @@ def main() -> int:
     parser.add_argument("--memory-cap-gib", type=float, default=12.0, help="Combined worker memory cap; reduced when available RAM is lower")
     parser.add_argument("--execution-order", choices=["adapter-first", "rotated"], default="adapter-first")
     parser.add_argument("--execute", action="store_true")
+    parser.add_argument("--repeat-timeouts", action="store_true")
     parser.add_argument("--confirm")
     parser.add_argument(
         "--repeats",
@@ -1083,6 +1087,7 @@ def main() -> int:
         timeout_seconds=args.timeout,
         memory_cap_gib=args.memory_cap_gib,
         execution_order=args.execution_order,
+        repeat_timeouts=args.repeat_timeouts,
     )
     plan = {
         "workspace_manifest_sha256": sha256_file(root / "workspace_manifest.json"),

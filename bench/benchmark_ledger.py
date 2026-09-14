@@ -22,6 +22,8 @@ from bench.benchmark_models import (
     RunSpec,
     TaskSpec,
     canonical_json,
+    fingerprint,
+    run_spec_identity,
 )
 
 
@@ -348,6 +350,22 @@ class BenchmarkLedger:
                 event_type TEXT NOT NULL,
                 task_id TEXT,
                 details_json TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS protocol_amendments (
+                amendment_id TEXT PRIMARY KEY,
+                created_at REAL NOT NULL,
+                old_fingerprint TEXT NOT NULL,
+                new_fingerprint TEXT NOT NULL,
+                old_spec_json TEXT NOT NULL,
+                new_spec_json TEXT NOT NULL,
+                details_json TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS measurement_origins (
+                task_id TEXT PRIMARY KEY REFERENCES tasks(task_id),
+                amendment_id TEXT NOT NULL REFERENCES protocol_amendments(amendment_id),
+                run_fingerprint TEXT NOT NULL,
+                payload_sha256 TEXT NOT NULL
             );
             """
         )
@@ -717,6 +735,7 @@ class BenchmarkLedger:
         run_fingerprint = self._metadata("run_fingerprint")
         if not run_fingerprint:
             raise RunIntegrityError("benchmark ledger has no run fingerprint")
+        origins = self.measurement_origins()
 
         records: List[Dict[str, Any]] = []
         payloads: List[Dict[str, Any]] = []
@@ -773,7 +792,7 @@ class BenchmarkLedger:
             if (
                 not isinstance(benchmark, dict)
                 or benchmark.get("task_id") != task_id
-                or benchmark.get("run_fingerprint") != run_fingerprint
+                or benchmark.get("run_fingerprint") != origins.get(task_id, run_fingerprint)
                 or benchmark.get("status") != STATUS_MEASURED
                 or benchmark.get("record") != record
             ):
@@ -784,6 +803,41 @@ class BenchmarkLedger:
             payload["_verified_payload_sha256"] = expected_digest
             payloads.append(payload)
         return records, payloads
+
+    def protocol_amendments(self) -> List[Dict[str, Any]]:
+        """Validate the explicit amendment chain; ordinary resume stays strict."""
+        amendments = [dict(row) for row in self.connection.execute(
+            "SELECT * FROM protocol_amendments ORDER BY created_at, amendment_id"
+        )]
+        previous = None
+        for item in amendments:
+            try:
+                old = fingerprint(run_spec_identity(json.loads(item["old_spec_json"])))
+                new = fingerprint(run_spec_identity(json.loads(item["new_spec_json"])))
+            except (TypeError, ValueError) as exc:
+                raise RunIntegrityError("malformed protocol amendment") from exc
+            if (old != item["old_fingerprint"] or new != item["new_fingerprint"]
+                    or (previous is not None and previous != old)):
+                raise RunIntegrityError("protocol amendment fingerprint chain differs")
+            previous = new
+        if amendments and previous != self._metadata("run_fingerprint"):
+            raise RunIntegrityError("protocol amendment does not lead to current run")
+        return amendments
+
+    def measurement_origins(self) -> Dict[str, str]:
+        amendments = {item["amendment_id"]: item for item in self.protocol_amendments()}
+        origins = {}
+        for row in self.connection.execute(
+            "SELECT o.*, t.status, t.payload_sha256 AS current_sha256 "
+            "FROM measurement_origins o JOIN tasks t USING(task_id)"
+        ):
+            amendment = amendments.get(row["amendment_id"])
+            if (amendment is None or row["status"] != STATUS_MEASURED
+                    or row["run_fingerprint"] != amendment["old_fingerprint"]
+                    or row["payload_sha256"] != row["current_sha256"]):
+                raise RunIntegrityError("historical measurement provenance differs")
+            origins[str(row["task_id"])] = str(row["run_fingerprint"])
+        return origins
 
     def status_counts(self) -> Dict[str, int]:
         rows = self.connection.execute(
@@ -807,6 +861,18 @@ class BenchmarkLedger:
             """,
             (case_id, adapter, workload_key, repeat, STATUS_MEASURED),
         ).fetchone()
+
+    def exact_timeout(self, case_id: str, adapter: str, workload_key: str) -> Optional[Dict[str, Any]]:
+        row = self.connection.execute(
+            "SELECT task_id,spec_json,error FROM tasks WHERE case_id=? AND adapter=? "
+            "AND workload_key=? AND status='timed_out_censored' ORDER BY repeat LIMIT 1",
+            (case_id, adapter, workload_key),
+        ).fetchone()
+        if row is None:
+            return None
+        spec = json.loads(row["spec_json"])
+        return {"complexity_metric": "image_voxels", "cutoff_complexity": spec["image_voxels"],
+                "evidence_task_id": row["task_id"], "reason": row["error"]}
 
     def record_guardrail_observation(
         self,

@@ -104,6 +104,7 @@ def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--guardrail-min-observations", type=int, default=1)
     parser.add_argument("--enable-speed-truncation", action="store_true")
     parser.add_argument("--no-truncate-on-timeout", action="store_true")
+    parser.add_argument("--repeat-timeouts", action="store_true")
     parser.add_argument("--memory-budget-fraction", type=float, default=0.80)
     parser.add_argument("--memory-reserve-gib", type=float, default=4.0)
     parser.add_argument("--memory-cap-gib", type=float, default=None)
@@ -181,6 +182,7 @@ def _run_argv(args: argparse.Namespace) -> list[str]:
         ("--extend-repeats", args.extend_repeats),
         ("--enable-speed-truncation", args.enable_speed_truncation),
         ("--no-truncate-on-timeout", args.no_truncate_on_timeout),
+        ("--repeat-timeouts", args.repeat_timeouts),
         ("--no-verify-dataset-hashes", args.no_verify_dataset_hashes),
         ("--dry-run", args.dry_run),
     )
