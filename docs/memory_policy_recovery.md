@@ -26,9 +26,18 @@ unrelated execution changes, and verifies every committed measurement.
 From the updated production repository:
 
 ```powershell
+poetry run python scripts/prepare_benchmark_workspace.py `
+  --output-root data/benchmark --validate-only
+
 poetry run python scripts/repair_memory_policy.py `
   --machine-root C:\BenchResults\full-mem12-15m-20260909\windows-9800x3d-01
 ```
+
+The first command revalidates the existing inputs and refreshes the workspace's
+launcher checksum. It does not regenerate dataset files or calculate features.
+Keep a copy of the original `data/benchmark/workspace_manifest.json` with the
+recovery records before refreshing it. Without this step, the launcher rejects
+the old workspace manifest after the source update.
 
 The preview reports verified measurements, memory skips to reopen and the new
 fingerprints. It acquires all three run locks before opening any ledger. It
