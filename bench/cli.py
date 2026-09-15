@@ -67,6 +67,7 @@ def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--execution-order", choices=["adapter-first", "rotated"], default="adapter-first")
     parser.add_argument("--execute-adapters", default=None, help="Execute only this adapter stage of the full plan")
+    parser.add_argument("--execution-phase", choices=["all", "screen", "complete"], default="all")
     parser.add_argument("--termination-grace", type=float, default=3.0)
     parser.add_argument("--keep-going", action="store_true")
     parser.add_argument("--resume", action="store_true")
@@ -163,6 +164,7 @@ def _run_argv(args: argparse.Namespace) -> list[str]:
         ("--timeout", args.timeout),
         ("--execution-order", args.execution_order),
         ("--execute-adapters", args.execute_adapters),
+        ("--execution-phase", args.execution_phase),
         ("--memory-cap-gib", args.memory_cap_gib),
         ("--project-total-tasks", args.project_total_tasks),
         ("--machine-id", args.machine_id),

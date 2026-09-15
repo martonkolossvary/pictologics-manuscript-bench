@@ -15,6 +15,11 @@ from bench.compliance.references import (
 
 
 class CliForwardingTests(unittest.TestCase):
+    def test_execution_phase_is_forwarded(self) -> None:
+        args = _parser().parse_args(["run", "--dataset-dir", "dataset", "--execution-phase", "screen"])
+        forwarded = _run_argv(args)
+        self.assertEqual(forwarded[forwarded.index("--execution-phase") + 1], "screen")
+
     def test_run_defaults_to_grouped_native_workloads(self) -> None:
         args = _parser().parse_args(["run", "--dataset-dir", "dataset"])
         self.assertEqual(args.workloads, "all")

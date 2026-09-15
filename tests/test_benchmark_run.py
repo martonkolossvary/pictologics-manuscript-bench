@@ -1228,6 +1228,70 @@ class BenchmarkRunnerTests(unittest.TestCase):
         commit = mock.patch.object(run, "_git_commit", return_value="test")
         return process, environments, machine, commit
 
+    def test_screening_resumes_without_duplicate_work_then_completes_repeats(self) -> None:
+        self.make_dataset([1000, 8000], synthetic_series=True)
+
+        def fake(adapter, **kwargs):
+            return adapter_payload(adapter, kwargs["families"],
+                                   benchmark_workload=kwargs.get("benchmark_workload")), metrics(1.0)
+
+        common = self.args("--adapters", "pictologics", "--workloads", "texture", "--repeats", "3", "--extend-repeats")
+        for phase, count in [("screen", 2), ("screen", 0), ("complete", 4), ("complete", 0)]:
+            patchers = self.stable_patchers(fake)
+            with patchers[0] as process, patchers[1], patchers[2], patchers[3]:
+                self.assertEqual(run.main([*common, "--resume", "--execution-phase", phase]), 0)
+                self.assertEqual(process.call_count, count)
+        with BenchmarkLedger(self.report / "benchmark.sqlite3") as ledger:
+            self.assertEqual(ledger.status_counts(), {STATUS_MEASURED: 6})
+            self.assertEqual(len(ledger.verified_records_and_payloads()[1]), 6)
+
+    def test_screening_timeout_commits_all_matching_exclusions(self) -> None:
+        self.make_dataset([1000, 8000], synthetic_series=True)
+
+        def fake(adapter, **kwargs):
+            raise run.AdapterTimeout(adapter, 5.0, 5.1, 999999)
+
+        common = self.args("--adapters", "pictologics", "--workloads", "texture",
+                           "--repeats", "3", "--extend-repeats", "--timeout", "5", "--keep-going")
+        for phase, count in [("screen", 1), ("complete", 0)]:
+            patchers = self.stable_patchers(fake)
+            with patchers[0] as process, patchers[1], patchers[2], patchers[3]:
+                self.assertEqual(run.main([*common, "--resume", "--execution-phase", phase]), 0)
+                self.assertEqual(process.call_count, count)
+        with BenchmarkLedger(self.report / "benchmark.sqlite3") as ledger:
+            self.assertEqual(ledger.status_counts()[STATUS_TIMED_OUT], 1)
+            self.assertEqual(ledger.status_counts()[STATUS_SKIPPED_TIMEOUT], 5)
+
+    def test_completion_cannot_run_unscreened_configurations(self) -> None:
+        self.make_dataset([1000])
+        patchers = self.stable_patchers(lambda *a, **k: self.fail("must screen first"))
+        with patchers[0] as process, patchers[1], patchers[2], patchers[3]:
+            self.assertEqual(run.main(self.args("--adapters", "pictologics", "--workloads", "texture",
+                                               "--execution-phase", "complete")), 1)
+            process.assert_not_called()
+
+    def test_partial_screening_interrupt_resumes_at_unknown_configuration(self) -> None:
+        self.make_dataset([1000, 8000], synthetic_series=True)
+        calls = []
+
+        def fake(adapter, **kwargs):
+            calls.append(kwargs["image"])
+            if len(calls) == 2:
+                raise run.AdapterInterrupted(adapter, 0.2, 999999)
+            return adapter_payload(adapter, kwargs["families"],
+                                   benchmark_workload=kwargs.get("benchmark_workload")), metrics(1.0)
+
+        common = self.args("--adapters", "pictologics", "--workloads", "texture",
+                           "--repeats", "3", "--extend-repeats", "--execution-phase", "screen")
+        for result, count in [(130, 2), (0, 1)]:
+            patchers = self.stable_patchers(fake)
+            with patchers[0] as process, patchers[1], patchers[2], patchers[3]:
+                self.assertEqual(run.main([*common, "--resume"]), result)
+                self.assertEqual(process.call_count, count)
+        with BenchmarkLedger(self.report / "benchmark.sqlite3") as ledger:
+            self.assertEqual(ledger.status_counts(), {STATUS_MEASURED: 2, "pending": 4})
+            self.assertEqual(sorted(r["attempt"] for r in ledger.records()), [1, 2])
+
     def test_guardrail_skips_only_strictly_larger_matching_workload(
         self,
     ) -> None:

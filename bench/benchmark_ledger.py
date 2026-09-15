@@ -8,7 +8,7 @@ import sqlite3
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 from bench.benchmark_models import (
     ALL_STATUSES,
@@ -638,10 +638,9 @@ class BenchmarkLedger:
         if status not in TERMINAL_STATUSES and status != STATUS_INTERRUPTED:
             raise ValueError(f"not a terminal attempt status: {status}")
         now = time.time()
-        record_json = canonical_json(dict(record))
         with self.connection:
             row = self.connection.execute(
-                "SELECT status, attempt FROM tasks WHERE task_id = ?", (task_id,)
+                "SELECT status, attempt, started_at FROM tasks WHERE task_id = ?", (task_id,)
             ).fetchone()
             if row is None:
                 raise KeyError(task_id)
@@ -650,14 +649,23 @@ class BenchmarkLedger:
             if current in TERMINAL_STATUSES and not adopted:
                 raise RuntimeError(f"task {task_id} is already terminal: {current}")
 
-            if attempt == 0:
+            started_at = row["started_at"]
+            if current != STATUS_RUNNING and not adopted:
+                # A reopened skip/retry already has history. A new policy
+                # decision must append to it, never overwrite the old attempt.
+                latest = self.connection.execute(
+                    "SELECT MAX(attempt) FROM task_attempts WHERE task_id = ?",
+                    (task_id,),
+                ).fetchone()[0]
+                attempt = 0 if latest is None else max(attempt, int(latest)) + 1
+                started_at = None
                 self.connection.execute(
                     "INSERT INTO task_attempts(task_id, attempt, status, started_at, finished_at, error) "
-                    "VALUES(?, 0, ?, NULL, ?, ?)",
-                    (task_id, status, now, error),
+                    "VALUES(?, ?, ?, NULL, ?, ?)",
+                    (task_id, attempt, status, now, error),
                 )
             else:
-                self.connection.execute(
+                updated = self.connection.execute(
                     """
                     UPDATE task_attempts
                     SET status = ?, finished_at = ?, error = ?
@@ -665,16 +673,25 @@ class BenchmarkLedger:
                     """,
                     (status, now, error, task_id, attempt),
                 )
+                if updated.rowcount != 1:
+                    raise RunIntegrityError(f"task {task_id} has no attempt to finalize")
+
+            saved_record = dict(record)
+            if status != STATUS_MEASURED:
+                saved_record["attempt"] = attempt
+            record_json = canonical_json(saved_record)
 
             self.connection.execute(
                 """
                 UPDATE tasks
-                SET status = ?, finished_at = ?, duration_sec = ?, payload_path = ?,
+                SET status = ?, attempt = ?, started_at = ?, finished_at = ?, duration_sec = ?, payload_path = ?,
                     payload_sha256 = ?, record_json = ?, error = ?
                 WHERE task_id = ?
                 """,
                 (
                     status,
+                    attempt,
+                    started_at,
                     now,
                     duration_sec,
                     payload_path,
@@ -693,6 +710,14 @@ class BenchmarkLedger:
                     task_id,
                     canonical_json({"attempt": attempt, "status": status}),
                 ),
+            )
+
+    def record_execution_stage(self, phase: str, adapters: Sequence[str]) -> None:
+        with self.connection:
+            self.connection.execute(
+                "INSERT INTO events(created_at, event_type, details_json) VALUES(?, ?, ?)",
+                (time.time(), "execution_stage_started", canonical_json({
+                    "phase": phase, "adapters": list(adapters)})),
             )
 
     def task_rows(self) -> List[sqlite3.Row]:

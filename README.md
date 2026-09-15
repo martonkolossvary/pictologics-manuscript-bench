@@ -336,8 +336,9 @@ the run. Repeated failures remain visible in the ledger and QC report.
   observation. Subsequent tasks for the same adapter, workload, mask/subject
   scaling series, and stored representation are not launched when the image is
   strictly larger; they receive the explicit terminal status
-  `skipped_timeout_cutoff`. Equal-sized repeats, different masks or
-  configurations, and unrelated real-world cases still run.
+  `skipped_timeout_cutoff`. Identical timed-out configurations also skip later
+  repeats by default; `--repeat-timeouts` explicitly retries them. Different
+  masks/configurations and unrelated real-world cases remain independent.
 - Memory estimates above the live budget prevent launch. The launcher caps
   each worker tree at 12 GiB, reduced when available RAM is lower, and reserves
   at least 4 GiB or 20% of physical RAM for the host. Windows enforces combined
@@ -350,10 +351,15 @@ the run. Repeated failures remain visible in the ledger and QC report.
   statuses; none is a measured result.
 - The default launcher finishes Pictologics across all three pillars, then each
   remaining adapter in workspace order. It shares the original all-adapter ledger
-  for each pillar. Within each adapter, repeat 1 covers sizes ascending before
-  repeats 2 and 3. `--execution-order rotated` selects the balanced comparison
-  schedule instead. Order and resource policy are immutable run provenance;
-  changing them requires a new result directory.
+  for each pillar. For each adapter, it screens unknown configurations across
+  all three pillars before completing successful configurations' remaining
+  repeats. A screen uses the normal full timing protocol and counts as a
+  measured repeat; existing successful repeats already establish eligibility.
+  Known resource cutoffs are committed without launching another worker.
+  `--execution-order rotated` selects the balanced comparison schedule instead.
+  Each screening/completion stage is recorded in the ledger. The full task grid
+  and timing/resource policy remain fixed. Existing v2 runs require the audited
+  [execution repair](docs/execution_order_recovery.md) before using this source.
 - Power state is task provenance, not eligibility. The controller probes at
   both task boundaries and QC identifies unavailable observations or a mode
   transition; results can therefore be stratified without blocking execution.

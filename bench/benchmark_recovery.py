@@ -21,24 +21,29 @@ from bench.benchmark_memory import LEGACY_MEMORY_POLICY_ID, MEMORY_POLICY_ID, Me
 from bench.benchmark_models import RunSpec, TaskSpec, canonical_json, fingerprint, run_spec_identity
 
 LEGACY_SOURCE_COMMIT = "7282e02c3dac0180f00c391eecc487b07c8d83cf"
+EXECUTION_REPAIR_BASE_COMMIT = "124fc57cca9d157e8ba041ba6cfc31fa78aa49e7"
+EXECUTION_REPAIR_FILES = frozenset({"bench/benchmark_ledger.py", "bench/run.py", "bench/cli.py"})
 REPAIRABLE_EXECUTION_FILES = frozenset({
     "bench/benchmark_memory.py", "bench/benchmark_ledger.py", "bench/run.py",
     "bench/cli.py", "bench/benchmark_eta.py", "bench/benchmark_guardrails.py",
 })
 
 
-def _git_bytes(repository: Path, relative: str) -> bytes:
-    result = subprocess.run(["git", "show", f"{LEGACY_SOURCE_COMMIT}:{relative}"],
+def _git_bytes(repository: Path, relative: str, commit: str = LEGACY_SOURCE_COMMIT) -> bytes:
+    result = subprocess.run(["git", "show", f"{commit}:{relative}"],
                             cwd=repository, capture_output=True, check=False)
     if result.returncode:
         raise RunIntegrityError(f"cannot read the audited legacy source: {relative}")
     return result.stdout
 
 
-def source_evidence(repository: Path, old: Mapping[str, Any]) -> dict[str, Any]:
+def source_evidence(repository: Path, old: Mapping[str, Any], *,
+                    legacy_commit: str = LEGACY_SOURCE_COMMIT,
+                    repairable_files: frozenset[str] = REPAIRABLE_EXECUTION_FILES,
+                    prior_execution_files: Mapping[str, str] | None = None) -> dict[str, Any]:
     from bench.run import _benchmark_execution_sources, _benchmark_sources_sha256
 
-    tree = ast.parse(_git_bytes(repository, "bench/run.py"))
+    tree = ast.parse(_git_bytes(repository, "bench/run.py", legacy_commit))
     source_paths = None
     for node in tree.body:
         if isinstance(node, ast.Assign) and any(
@@ -51,12 +56,15 @@ def source_evidence(repository: Path, old: Mapping[str, Any]) -> dict[str, Any]:
     paths = set(source_paths) | {f"bench/adapters/{a}_adapter.py" for a in old["adapters"]}
     # Git blobs can have LF while the audited Windows checkout has CRLF. Match
     # the exact old aggregate, rather than assuming either checkout convention.
-    blobs = {p: _git_bytes(repository, p) for p in paths}
+    blobs = {p: _git_bytes(repository, p, legacy_commit) for p in paths}
     candidates = [
         {p: hashlib.sha256(blob).hexdigest() for p, blob in blobs.items()},
         {p: hashlib.sha256(blob.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")).hexdigest()
          for p, blob in blobs.items()},
     ]
+    if prior_execution_files is not None and set(prior_execution_files) == paths:
+        if all(prior_execution_files[p] in {candidate[p] for candidate in candidates} for p in paths):
+            candidates.append(dict(prior_execution_files))
     legacy = next((mapping for mapping in candidates if
         _benchmark_sources_sha256(old["adapters"], execution_files=mapping)
         == old["benchmark_sources_sha256"]), None)
@@ -67,18 +75,52 @@ def source_evidence(repository: Path, old: Mapping[str, Any]) -> dict[str, Any]:
         )
     current = _benchmark_execution_sources(old["adapters"])
     if current.keys() != legacy.keys():
-        raise RunIntegrityError("execution dependency set changed beyond the memory repair")
+        raise RunIntegrityError("execution dependency set changed beyond the audited repair")
     changed = {p for p in current if current[p] != legacy[p]}
     line_endings_only = {p for p in changed if
         (repository/p).read_bytes().replace(b"\r\n", b"\n") == blobs[p].replace(b"\r\n", b"\n")}
-    unexpected = changed-REPAIRABLE_EXECUTION_FILES-line_endings_only
+    unexpected = changed-repairable_files-line_endings_only
     if unexpected:
         raise RunIntegrityError("non-repair execution files changed: " + ", ".join(sorted(unexpected)))
-    return {"legacy_commit": LEGACY_SOURCE_COMMIT, "changed_execution_files": sorted(changed),
+    return {"legacy_commit": legacy_commit, "changed_execution_files": sorted(changed),
             "line_ending_only_changes": sorted(line_endings_only),
             "old_execution_files": legacy, "new_execution_files": current,
             "new_sources_sha256": _benchmark_sources_sha256(old["adapters"]),
             "repair_module_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
+
+
+def plan_execution_repair(ledger: BenchmarkLedger, repository: Path) -> dict[str, Any]:
+    """Amend only controller source identity; preserve every task and policy."""
+    from bench.run import _benchmark_sources_sha256
+
+    old = json.loads(ledger.metadata_value("run_spec_json") or "null")
+    if not isinstance(old, dict) or fingerprint(run_spec_identity(old)) != ledger.metadata_value("run_fingerprint"):
+        raise RunIntegrityError("stored specification does not match the run fingerprint")
+    _, payloads = ledger.verified_records_and_payloads()
+    if any(row["status"] == "running" for row in ledger.task_rows()):
+        raise RunIntegrityError("cannot amend a running task")
+    if old.get("schema_version") != 15 or old.get("memory_preflight", {}).get("policy_id") != MEMORY_POLICY_ID:
+        raise RunIntegrityError("execution repair requires the schema-15 v2 memory policy")
+    current = _benchmark_sources_sha256(old["adapters"])
+    if old["benchmark_sources_sha256"] == current:
+        return {"already_repaired": True, "measured": len(payloads), "new_spec": old,
+                "new_fingerprint": ledger.metadata_value("run_fingerprint"), "requeue": []}
+    amendments = ledger.protocol_amendments()
+    prior = (json.loads(amendments[-1]["details_json"]).get("source_evidence", {}).get("new_execution_files")
+             if amendments else None)
+    evidence = source_evidence(repository, old, legacy_commit=EXECUTION_REPAIR_BASE_COMMIT,
+                               repairable_files=EXECUTION_REPAIR_FILES, prior_execution_files=prior)
+    values = {field.name: old[field.name] for field in fields(RunSpec) if field.name in old}
+    values["benchmark_sources_sha256"] = evidence["new_sources_sha256"]
+    new = RunSpec.create(**values)
+    if {k:v for k,v in new.to_dict().items() if k != "benchmark_sources_sha256"} != {
+            k:v for k,v in old.items() if k != "benchmark_sources_sha256"}:
+        raise RunIntegrityError("execution repair would change the calculation protocol")
+    return {"already_repaired": False, "old_spec": old, "new_spec": new.to_dict(),
+            "old_fingerprint": ledger.metadata_value("run_fingerprint"),
+            "new_fingerprint": new.run_fingerprint, "measured": len(payloads),
+            "source_evidence": evidence, "preflight_ids": [], "requeue": [],
+            "reason": "repair append-only ledger transitions and screen each adapter across all pillars before completing repeats"}
 
 
 def corrected_spec(old: Mapping[str, Any], new_sources_sha256: str, *, repeat_timeouts: bool = False) -> RunSpec:
@@ -174,7 +216,7 @@ def apply_repair(ledger: BenchmarkLedger, plan: Mapping[str, Any], backup_dir: P
         connection.execute("INSERT INTO protocol_amendments VALUES(?,?,?,?,?,?,?)", (
             amendment_id, now, plan["old_fingerprint"], plan["new_fingerprint"],
             canonical_json(plan["old_spec"]), canonical_json(plan["new_spec"]),
-            canonical_json({"reason":"repair false memory estimates; retain historical measurement provenance",
+            canonical_json({"reason":plan.get("reason", "repair false memory estimates; retain historical measurement provenance"),
                             "backup":str(backup_dir), "source_evidence":plan["source_evidence"]})))
         connection.execute("INSERT OR IGNORE INTO measurement_origins SELECT task_id, ?, ?, payload_sha256 FROM tasks WHERE status='measured'",
                            (amendment_id, plan["old_fingerprint"]))

@@ -20,6 +20,7 @@ import re
 import shutil
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -30,7 +31,7 @@ from typing import Any
 import psutil
 
 from bench.benchmark_ledger import atomic_write_json, sha256_file
-from bench.benchmark_models import RUN_SPEC_SCHEMA_VERSION
+from bench.benchmark_models import RUN_SPEC_SCHEMA_VERSION, TERMINAL_STATUSES
 from bench.benchmark_workspace import WORKSPACE_MANIFEST_SCHEMA_VERSION
 from bench.power_provenance import observe_task_power_state
 
@@ -895,23 +896,32 @@ def build_commands(
         project_task_offset += pillar_task_counts[pillar]
     if execution_order == "adapter-first":
         staged = []
-        adapter_count = len(workspace["adapter_order"])
-        for adapter_index, adapter in enumerate(workspace["adapter_order"]):
-            earlier_pillars = 0
-            for (pillar, _), command in zip(PILLARS, commands):
-                # Each pillar retains its full all-adapter ledger. Account for
-                # completed stages on the other pillars, without counting this
-                # pillar's earlier adapters twice in the project progress.
-                offset = (
-                    adapter_index * (project_total_tasks - pillar_task_counts[pillar])
-                    // adapter_count + earlier_pillars
-                )
-                staged_command = [*command, "--execute-adapters", adapter]
-                staged_command[staged_command.index("--project-task-offset") + 1] = str(offset)
-                staged.append(staged_command)
-                earlier_pillars += pillar_task_counts[pillar] // adapter_count
+        for adapter in workspace["adapter_order"]:
+            for phase in ("screen", "complete"):
+                for command in commands:
+                    staged_command = [*command, "--execute-adapters", adapter,
+                                      "--execution-phase", phase]
+                    # Read actual other-pillar completion at dispatch, since a
+                    # screening stage intentionally leaves repeats pending.
+                    staged_command[staged_command.index("--project-task-offset") + 1] = "0"
+                    staged.append(staged_command)
         return staged
     return commands
+
+
+def _with_observed_project_offset(command: list[str]) -> list[str]:
+    report = Path(command[command.index("--report-dir") + 1])
+    completed = 0
+    for pillar, _ in PILLARS:
+        path = report.parent / pillar / "benchmark.sqlite3"
+        if path.parent == report or not path.is_file():
+            continue
+        with sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True) as connection:
+            completed += sum(count for status, count in connection.execute(
+                "SELECT status, COUNT(*) FROM tasks GROUP BY status") if status in TERMINAL_STATUSES)
+    updated = list(command)
+    updated[updated.index("--project-task-offset") + 1] = str(completed)
+    return updated
 
 
 def _run_controller_command(command: list[str]) -> int:
@@ -1170,7 +1180,7 @@ def main() -> int:
         return 0
     try:
         for command in commands:
-            returncode = _run_controller_command(command)
+            returncode = _run_controller_command(_with_observed_project_offset(command))
             if returncode != 0:
                 return returncode
         return 0

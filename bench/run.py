@@ -20,7 +20,7 @@ from functools import lru_cache
 from numbers import Real
 from importlib import metadata as importlib_metadata
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 
 import psutil
 
@@ -4005,6 +4005,61 @@ def _execution_tasks(tasks: Sequence[TaskSpec], adapters: Sequence[str], order: 
     return selected
 
 
+def _feasibility_key(task: TaskSpec) -> Tuple[str, str, str]:
+    # Case and workload identities include the input representation and settings.
+    return task.case_id, task.adapter, task.workload_key
+
+
+def _known_exclusion(task: TaskSpec, ledger: BenchmarkLedger, policy: GuardrailPolicy) -> bool:
+    """Only persisted evidence in this ledger can suppress a screening worker."""
+    if _declared_unsupported_reason(task) is not None:
+        return True
+    if policy.truncate_on_timeout:
+        if policy.skip_repeated_timeouts and ledger.exact_timeout(*_feasibility_key(task)) is not None:
+            return True
+        cutoff = ledger.timeout_cutoff(policy.timeout_scope_key(
+            task.adapter, task.workload_key, task.guardrail_group))
+        metric, complexity = _timeout_cutoff_complexity(task)
+        if cutoff is not None and metric == cutoff["complexity_metric"] and complexity > int(cutoff["cutoff_complexity"]):
+            return True
+    cutoff = ledger.memory_cutoff(_memory_scope(task))
+    if cutoff is not None and cutoff["complexity_metric"] == "image_voxels" and task.image_voxels >= int(cutoff["cutoff_complexity"]):
+        return True
+    cutoff = (ledger.guardrail_decision(policy.scope_key(task.adapter, task.workload_key, task.guardrail_group))
+              if policy.should_compare(task.adapter) else None)
+    return cutoff is not None and task.complexity > int(cutoff["cutoff_complexity"])
+
+
+def _phase_execution_tasks(tasks: Sequence[TaskSpec], ledger: BenchmarkLedger,
+                           policy: GuardrailPolicy, phase: str) -> Iterator[TaskSpec]:
+    if phase == "all":
+        yield from tasks
+        return
+    measured = {_feasibility_key(task) for task in tasks
+                if ledger.status(task.task_id) == STATUS_MEASURED}
+    screened = {_feasibility_key(task) for task in tasks
+                if ledger.status(task.task_id) in TERMINAL_STATUSES - {STATUS_FAILED}}
+    if phase == "complete" and not policy.skip_repeated_timeouts:
+        measured.update(_feasibility_key(task) for task in tasks
+                        if ledger.status(task.task_id) == STATUS_TIMED_OUT)
+    for task in tasks:
+        if ledger.status(task.task_id) not in RECOVERABLE_STATUSES:
+            continue
+        key = _feasibility_key(task)
+        # Commit all known exclusions, including repeats and larger sizes, even
+        # during screening. This preserves the full experimental denominator.
+        excluded = _known_exclusion(task, ledger, policy)
+        eligible = key not in measured and key not in screened if phase == "screen" else key in measured
+        if not excluded and not eligible:
+            continue
+        screened.add(key)
+        yield task
+        # Read after the controller commits: a successful screen is a normal
+        # measured repeat, and a new cutoff applies to later tasks immediately.
+        if ledger.status(task.task_id) == STATUS_MEASURED:
+            measured.add(key)
+
+
 def _checkpoint(
     *,
     ledger: BenchmarkLedger,
@@ -4318,6 +4373,8 @@ def _make_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--execution-order", choices=["adapter-first", "rotated"], default="adapter-first")
+    parser.add_argument("--execution-phase", choices=["all", "screen", "complete"], default="all",
+                        help="Screen unknown configurations once, or complete repeats of measured configurations")
     parser.add_argument("--execute-adapters", default=None,
                         help="Execute only this comma-separated stage of the immutable all-adapter plan")
     parser.add_argument("--keep-going", action="store_true")
@@ -4723,7 +4780,10 @@ def main(argv: List[str] | None = None) -> int:
 
             with _SignalStop() as stop:
                 try:
-                    for task in _execution_tasks(tasks, adapters, args.execution_order, execute_adapters):
+                    stage_tasks = _execution_tasks(tasks, adapters, args.execution_order, execute_adapters)
+                    ledger.record_execution_stage(args.execution_phase, execute_adapters or adapters)
+                    print(f"EXECUTION phase={args.execution_phase} adapters={','.join(execute_adapters or adapters)}", flush=True)
+                    for task in _phase_execution_tasks(stage_tasks, ledger, policy, args.execution_phase):
                         status = ledger.status(task.task_id)
                         if status in TERMINAL_STATUSES:
                             continue
@@ -5345,7 +5405,13 @@ def main(argv: List[str] | None = None) -> int:
                     STATUS_RUNNING, 0
                 ) + counts.get(STATUS_INTERRUPTED, 0)
                 if incomplete:
-                    run_status = "stage_completed" if execute_adapters else "interrupted"
+                    stage_incomplete = [task for task in stage_tasks
+                                        if ledger.status(task.task_id) in RECOVERABLE_STATUSES]
+                    if args.execution_phase == "complete" and stage_incomplete:
+                        print(f"Completion blocked: {len(stage_incomplete)} tasks lack successful screening evidence; resume the screening stage.", flush=True)
+                        run_status = "failed"
+                    else:
+                        run_status = "stage_completed" if execute_adapters or args.execution_phase == "screen" else "interrupted"
                 elif any(counts.get(status, 0) for status in (STATUS_FAILED, STATUS_TIMED_OUT, STATUS_MEMORY_LIMIT, STATUS_SKIPPED_MEMORY_PREFLIGHT)):
                     run_status = "completed_with_failures"
                 else:

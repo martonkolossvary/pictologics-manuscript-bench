@@ -7,7 +7,7 @@ import pytest
 from bench.benchmark_ledger import BenchmarkLedger, RunIntegrityError, RunSpecMismatch, atomic_write_json
 from bench.benchmark_memory import MemoryPreflightPolicy, LEGACY_MEMORY_POLICY_ID
 from bench.benchmark_models import task_plan_fingerprint
-from bench.benchmark_recovery import corrected_spec, plan_repair, apply_repair, sync_recovery_exports
+from bench.benchmark_recovery import corrected_spec, plan_repair, plan_execution_repair, apply_repair, sync_recovery_exports
 from tests.test_benchmark_ledger import make_task, make_run_spec
 
 
@@ -92,6 +92,22 @@ def test_corrupt_measurement_rolls_back_requeue_and_amendment(recovery_fixture,t
     assert ledger.connection.execute('SELECT COUNT(*) FROM measurement_origins').fetchone()[0]==0
 
 
+def test_reopened_skip_can_be_skipped_again_without_losing_history(recovery_fixture,tmp_path):
+    ledger, _, tasks = recovery_fixture
+    task = tasks[2]
+    previous = tuple(ledger.connection.execute('SELECT * FROM task_attempts WHERE task_id=?', (task.task_id,)).fetchone())
+    apply_repair(ledger, plan_repair(ledger, Path.cwd()), tmp_path/'backup')
+    ledger.mark_terminal(task.task_id, 'skipped_timeout_cutoff',
+                         {'task_id':task.task_id, 'task_status':'skipped_timeout_cutoff', 'attempt':0})
+    attempts = ledger.connection.execute('SELECT * FROM task_attempts WHERE task_id=? ORDER BY attempt', (task.task_id,)).fetchall()
+    assert tuple(attempts[0]) == previous
+    assert len(attempts) == 2
+    assert attempts[1]['attempt'] == 1
+    assert ledger.task_row(task.task_id)['attempt'] == 1
+    assert json.loads(ledger.task_row(task.task_id)['record_json'])['attempt'] == 1
+    ledger.verified_records_and_payloads()
+
+
 def test_recovery_rejects_running_tasks(recovery_fixture):
     ledger,old,tasks=recovery_fixture
     ledger.connection.execute("UPDATE tasks SET status='running',record_json=NULL WHERE task_id=?",(tasks[1].task_id,))
@@ -132,3 +148,29 @@ def test_unknown_legacy_memory_settings_fail_closed(recovery_fixture):
     changed=old.to_dict();changed['memory_preflight']['invented_setting']=True
     with pytest.raises(RunIntegrityError,match='unsupported changes'):
         corrected_spec(changed,'new-source')
+
+
+def test_execution_amendment_preserves_two_generations_of_measurements(recovery_fixture, tmp_path, monkeypatch):
+    ledger, original, tasks = recovery_fixture
+    apply_repair(ledger, plan_repair(ledger, Path.cwd()), tmp_path/'memory-backup')
+    intermediate = ledger.metadata_value('run_fingerprint')
+    task = tasks[1]
+    record = {'task_id':task.task_id, 'task_status':'measured', 'attempt':ledger.mark_running(task.task_id)}
+    payload = {'benchmark':{'task_id':task.task_id, 'status':'measured', 'run_fingerprint':intermediate, 'record':record}}
+    digest = atomic_write_json(tmp_path/'new-payload.json', payload)
+    ledger.mark_terminal(task.task_id, 'measured', record, payload_path='new-payload.json', payload_sha256=digest)
+    before = [tuple(r) for r in ledger.task_rows()]
+    monkeypatch.setattr('bench.run._benchmark_sources_sha256', lambda *a, **kw:'stage-source')
+    monkeypatch.setattr('bench.benchmark_recovery.source_evidence', lambda *a, **kw:{'new_sources_sha256':'stage-source'})
+    plan = plan_execution_repair(ledger, Path.cwd())
+    assert {k for k in plan['old_spec'] if plan['old_spec'][k] != plan['new_spec'][k]} == {'benchmark_sources_sha256'}
+    apply_repair(ledger, plan, tmp_path/'execution-backup')
+    assert [tuple(r) for r in ledger.task_rows()] == before
+    assert len(ledger.protocol_amendments()) == 2
+    assert ledger.measurement_origins()[tasks[0].task_id] == original.run_fingerprint
+    assert ledger.measurement_origins()[task.task_id] == intermediate
+    assert len(ledger.verified_records_and_payloads()[1]) == 2
+    assert plan_execution_repair(ledger, Path.cwd())['already_repaired']
+    ledger.mark_running(tasks[2].task_id)
+    with pytest.raises(RunIntegrityError, match='running task'):
+        plan_execution_repair(ledger, Path.cwd())

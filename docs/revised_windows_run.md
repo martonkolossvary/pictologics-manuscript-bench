@@ -3,7 +3,10 @@
 This protocol uses one 900-second worker wall-time deadline, a maximum combined
 worker memory budget of 12 GiB, and adapter stages across all three datasets.
 Pictologics finishes first; the remaining adapters follow the workspace order.
-Within each adapter, repeat 1 visits image sizes ascending before repeats 2 and 3.
+Within each adapter, unknown configurations are screened across all three
+pillars, visiting sizes ascending, before completing successful configurations'
+remaining repeats. Existing successes count as screening evidence. See
+[execution_order_recovery.md](execution_order_recovery.md) for stopped v2 runs.
 Successful tasks retain three fresh processes and three observations per process.
 
 The deadline covers import, preparation, warmup, calibration, observations and
