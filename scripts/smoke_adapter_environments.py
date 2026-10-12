@@ -60,9 +60,9 @@ def smoke(profiles: list[str], output_dir: Path, timeout: float) -> list[dict]:
                 intensity_min=1.0 if discrete else None,
                 intensity_max=32.0 if discrete else None,
                 modality="CT",
-                families=[
-                    family for family in workload.families if adapter.supports(family)
-                ],
+                # The protocol accepts the complete canonical workload and
+                # records each adapter's unsupported families itself.
+                families=list(workload.families),
                 benchmark_workload=workload.name,
                 iterations=1,
                 include_values=True,
