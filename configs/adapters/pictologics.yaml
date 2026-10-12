@@ -1,22 +1,23 @@
 schema_version: 1
 name: pictologics
 distribution: pictologics
-version: "0.5.1"
+version: "0.7.1"
 python: "3.12"
-requirement: "pictologics==0.5.1"
+requirement: "pictologics @ https://files.pythonhosted.org/packages/4b/5b/a4d05411585e6a88093ed247859c39fc8a4522b575d96468cf273917fb34/pictologics-0.7.1-py3-none-any.whl#sha256=aa9bf3cff2ea22012732cb40f2ada17d49d0a87643c80db66667a10284537bfc"
 env_dir: ".venvs/adapters/pictologics"
 smoke_imports:
   - pictologics
-upstream: "https://pypi.org/project/pictologics/0.5.1/"
-verified_latest_stable: "2026-07-29"
-source_commit: "6008e6408fe8de1927389e3511192c4e3792785a"
-notes: "PyPI trusted-publishing release. Wheel SHA-256: b485c4fb909a29475a2a10e72bd09fcc07f2adb78a751ae55470fce5c3a4efb5; sdist SHA-256: 6121f7a8d18634efb5522f2689d96347d08d792ffa63380af0ec0ee00aeae86d."
+  - gdcm
+upstream: "https://pypi.org/project/pictologics/0.7.1/"
+verified_latest_stable: "2026-10-12"
+source_commit: "f2fdb963b17b483f339ff547c23fa519bf4850b9"
+notes: "PyPI release v0.7.1, verified against live PyPI JSON and GitHub tag. Wheel hash is enforced by the installer. Existing transitive pins are retained and python-gdcm 3.2.6 is added. Windows lock is verified natively; updated Darwin-arm64 lock still requires native verification on macOS before publication timing."
 environment_locks:
   Darwin-arm64:
     path: "reproducibility/environment-locks/darwin-arm64/pictologics.txt"
-    sha256: "d381af94f8f27fdb181b783c079e46ca5718bec4d1a6b8886755b9f2e6bc84d3"
-    freeze_sha256: "635622dae78d6d8dda82ac56b286206ed2f7a3e735522942263bf33f75709712"
+    sha256: "d54c777e969b1eda6376421061cead4a71b2f8ec79522152b716ca53d28f5874"
+    freeze_sha256: "e21f7bb2135831a79cc77861092fc19bfdedfee7527a5ae221fb874f8a874dc8"
   Windows-AMD64:
     path: "reproducibility/environment-locks/windows-amd64/pictologics.txt"
-    sha256: "957d7c19615e86622f71791b69b810fd22b00fbc53fcfe7adcbd88ac2c1912ef"
-    freeze_sha256: "3d76bbd7a6427450f27a07009f4dbdd5b877a36a3810039c9716a484daf42c61"
+    sha256: "3a3e3fbde12477163a3fa13f8b992605ba3e88db1f81c152dda7279fa93cfb02"
+    freeze_sha256: "0968a21c63b900af1d6ef9e1308385998cba265e507b00c0bcc8f0e8cfd2b9f9"

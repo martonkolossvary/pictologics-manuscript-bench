@@ -105,6 +105,7 @@ BENCHMARK_THREAD_VARIABLES = (
     "VECLIB_MAXIMUM_THREADS",
     "NUMEXPR_NUM_THREADS",
     "NUMBA_NUM_THREADS",
+    "PICTOLOGICS_NUM_THREADS",
     "ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS",
     "BLIS_NUM_THREADS",
 )
@@ -3812,12 +3813,24 @@ def _load_fresh_process_references(
 
 class _SignalStop:
     def __init__(self):
-        self.requested = False
+        self._requested = False
         self.signal_number: Optional[int] = None
         self._previous: Dict[int, Any] = {}
+        marker = os.environ.get("PICTOBENCH_STOP_FILE")
+        self.stop_file = Path(marker) if marker else None
+
+    @property
+    def requested(self) -> bool:
+        # A detached Windows process need not have a console to receive a
+        # cooperative stop. Poll alongside worker progress, then use the same
+        # interruption, process-tree cleanup and checkpoint path as Ctrl+C.
+        if self.stop_file is not None and self.stop_file.exists():
+            self._requested = True
+            self.signal_number = self.signal_number or int(signal.SIGINT)
+        return self._requested
 
     def _handler(self, signum, frame) -> None:
-        self.requested = True
+        self._requested = True
         self.signal_number = int(signum)
 
     def __enter__(self) -> "_SignalStop":

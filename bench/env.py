@@ -225,6 +225,34 @@ def _find_python(requested: str) -> Path:
         if candidate and candidate.exists():
             return candidate.resolve()
 
+    # Standard Windows installs expose the Python launcher (py.exe), not
+    # POSIX-style python3.9/python3.10 commands. Ask the launcher for the actual
+    # executable so adapter venv creation works with either install method.
+    launcher = shutil.which("py") if platform.system() == "Windows" else None
+    if launcher:
+        proc = subprocess.run(
+            [
+                launcher,
+                f"-{_major_minor(requested)}",
+                "-c",
+                "import sys; print(sys.executable)",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        candidate = (
+            Path(proc.stdout.strip())
+            if proc.returncode == 0 and proc.stdout.strip()
+            else None
+        )
+        if (
+            candidate
+            and candidate.is_file()
+            and _major_minor(_python_version(candidate)) == _major_minor(requested)
+        ):
+            return candidate.resolve()
+
     candidates = [f"python{requested}", f"python{_major_minor(requested)}"]
     for command in candidates:
         resolved = shutil.which(command)
@@ -366,8 +394,12 @@ def _require_compatible_installer(profile: RuntimeProfile) -> None:
         return
     uv = _find_uv()
     if uv is not None:
-        result = subprocess.run([uv, "--version"], capture_output=True, text=True, check=False)
-        if result.returncode == 0 and re.match(r"^uv 0\.8\.\d+(?:\s|$)", result.stdout.strip()):
+        result = subprocess.run(
+            [uv, "--version"], capture_output=True, text=True, check=False
+        )
+        if result.returncode == 0 and re.match(
+            r"^uv 0\.8\.\d+(?:\s|$)", result.stdout.strip()
+        ):
             return
     raise EnvironmentError(
         "MEDimage 0.9.8 requires uv >=0.8,<0.9 on every platform because its "

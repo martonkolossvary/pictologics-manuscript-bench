@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from bench import env
@@ -16,7 +18,7 @@ class EnvironmentProfileTests(unittest.TestCase):
             {
                 "medimage": "0.9.8",
                 "mirp": "2.7.0",
-                "pictologics": "0.5.1",
+                "pictologics": "0.7.1",
                 "pyradiomics": "3.1.0",
                 "zrad": "26.8.0",
             },
@@ -33,6 +35,50 @@ class EnvironmentProfileTests(unittest.TestCase):
             target.relative_to(base)
             paths.append(target)
         self.assertEqual(len(paths), len(set(paths)))
+
+    def test_windows_interpreter_discovery_supports_standard_py_launcher(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            python = Path(directory) / "python.exe"
+            python.touch()
+            with (
+                patch("bench.env.sys.version", "3.12.10"),
+                patch("bench.env._find_uv", return_value=None),
+                patch("bench.env.platform.system", return_value="Windows"),
+                patch(
+                    "bench.env.shutil.which",
+                    side_effect=lambda name: "py.exe" if name == "py" else None,
+                ),
+                patch("bench.env._python_version", return_value="3.9.13"),
+                patch(
+                    "bench.env.subprocess.run",
+                    return_value=unittest.mock.Mock(returncode=0, stdout=str(python)),
+                ) as run,
+            ):
+                self.assertEqual(env._find_python("3.9"), python.resolve())
+            self.assertEqual(run.call_args.args[0][:2], ["py.exe", "-3.9"])
+
+    def test_windows_interpreter_discovery_rejects_wrong_launcher_version(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            python = Path(directory) / "python.exe"
+            python.touch()
+            with (
+                patch("bench.env.sys.version", "3.12.10"),
+                patch("bench.env._find_uv", return_value=None),
+                patch("bench.env.platform.system", return_value="Windows"),
+                patch(
+                    "bench.env.shutil.which",
+                    side_effect=lambda name: "py.exe" if name == "py" else None,
+                ),
+                patch("bench.env._python_version", return_value="3.12.10"),
+                patch(
+                    "bench.env.subprocess.run",
+                    return_value=unittest.mock.Mock(returncode=0, stdout=str(python)),
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    env.EnvironmentError, "Python 3.9 is required"
+                ):
+                    env._find_python("3.9")
 
     def test_escaping_environment_path_is_rejected(self) -> None:
         profile = env.RuntimeProfile(
@@ -102,11 +148,11 @@ class EnvironmentProfileTests(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["cwd"], str(env.repo_root()))
         self.assertTrue(run.call_args.kwargs["check"])
 
-    def test_native_macos_locks_bind_the_complete_observed_freezes(self) -> None:
+    def test_macos_locks_bind_the_complete_expected_freezes(self) -> None:
         expected_counts = {
             "medimage": 235,
             "mirp": 29,
-            "pictologics": 26,
+            "pictologics": 27,
             "pyradiomics": 13,
             "zrad": 21,
         }
@@ -138,7 +184,7 @@ class EnvironmentProfileTests(unittest.TestCase):
         expected_counts = {
             "medimage": 236,
             "mirp": 30,
-            "pictologics": 28,
+            "pictologics": 29,
             "pyradiomics": 13,
             "zrad": 22,
         }

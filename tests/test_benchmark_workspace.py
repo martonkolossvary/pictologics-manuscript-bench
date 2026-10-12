@@ -439,6 +439,22 @@ class BenchmarkWorkspaceTests(unittest.TestCase):
         self.assertTrue(all(command[command.index("--timeout") + 1] == "900.0" for command in commands))
         self.assertTrue(all(command[command.index("--memory-cap-gib") + 1] == "12.0" for command in commands))
 
+        # Screening uses the very same plan, timeout, repeats and ledger as
+        # completion, and does not finish one adapter's repeats first.
+        for order in ("rotated", "adapter-first"):
+            screened = build_commands(
+                root, workspace, result_root=Path(temporary) / "results",
+                dry_run=True, machine_id="test-host", repeats=5,
+                execution_order=order, screen_only=True,
+            )
+            self.assertEqual(len(screened), 3)
+            for command in screened:
+                self.assertEqual(command[command.index("--execution-phase") + 1], "screen")
+                self.assertEqual(command[command.index("--repeats") + 1], "5")
+                self.assertEqual(command[command.index("--execution-order") + 1], order)
+                self.assertNotIn("--execute-adapters", command)
+                self.assertIn("--resume", command)
+
     def test_machine_id_rejects_path_components(self) -> None:
         with self.assertRaisesRegex(ValueError, "machine ID"):
             _validate_machine_id("../windows")

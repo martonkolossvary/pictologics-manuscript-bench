@@ -18,7 +18,7 @@ from typing import Any, Mapping
 
 from bench.benchmark_ledger import BenchmarkLedger, RunIntegrityError, atomic_write_json
 from bench.benchmark_memory import LEGACY_MEMORY_POLICY_ID, MEMORY_POLICY_ID, MemoryPreflightPolicy
-from bench.benchmark_models import RunSpec, TaskSpec, canonical_json, fingerprint, run_spec_identity
+from bench.benchmark_models import RunSpec, canonical_json, fingerprint, run_spec_identity
 
 LEGACY_SOURCE_COMMIT = "7282e02c3dac0180f00c391eecc487b07c8d83cf"
 EXECUTION_REPAIR_BASE_COMMIT = "124fc57cca9d157e8ba041ba6cfc31fa78aa49e7"

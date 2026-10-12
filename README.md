@@ -12,6 +12,13 @@ isolated environments. Every timed workload is one canonical IBSI feature
 group of one or more families using a manifest-bound stored representation.
 The controller is transactional, resumable, checksum-attested, and fail-closed.
 
+For the Pictologics 0.7.1 update, see the [adapter review](docs/fairness_review_20261012.md),
+[historical timeout boundaries](docs/historical_screening_20261012.md), and
+[screening/background execution and machine handoff](docs/screening_and_handoff.md).
+Start with `--screen-only --execution-order rotated` in a new result root before
+completing the full benchmark. Native environment verification is documented
+in [the lock notes](reproducibility/environment-locks/README.md).
+
 ## Repository contract
 
 This repository is the first and only public release of this benchmark. Its

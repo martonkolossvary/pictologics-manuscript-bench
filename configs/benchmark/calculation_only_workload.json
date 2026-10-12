@@ -97,7 +97,7 @@
   },
   "adapter_inventories": {
     "pictologics": {
-      "release_version": "0.5.1",
+      "release_version": "0.7.1",
       "native_output_count": 174,
       "ibsi_table2_definition_count": 172,
       "family_output_counts": {"morphology": 29, "local_intensity": 2, "intensity": 18, "histogram": 23, "ivh": 7, "glcm": 25, "glrlm": 16, "glszm": 16, "gldzm": 16, "ngtdm": 5, "ngldm": 17},

@@ -39,3 +39,43 @@ jobs:
       - uses: actions/checkout@v5
       - name: Validate POSIX launchers
         run: bash -n scripts/*.sh
+
+  native-adapters:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            interpreters: "3.9 3.10 3.12"
+          - os: macos-15
+            interpreters: "3.10 3.11 3.12"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      PICTOLOGICS_DISABLE_WARMUP: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install controller tools
+        run: python -m pip install "poetry>=2.2,<3" "uv==0.8.24"
+      - name: Install adapter interpreters
+        run: uv python install ${{ matrix.interpreters }}
+      - name: Install controller
+        run: poetry sync
+      - name: Require checked-in locks for the native runner architecture
+        run: >-
+          poetry run python -c "from bench import env;
+          print(env.native_platform_key());
+          missing = [p.name for p in env.load_runtime_profiles().values() if env._resolve_environment_lock(p) is None];
+          assert not missing, f'No native environment lock for {missing}'"
+      - name: Create and verify locked native adapter environments
+        run: poetry run python -m bench.cli env create
+      - name: Exercise every supported native workload without timing
+        run: poetry run python -m scripts.smoke_adapter_environments
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-smoke-${{ matrix.os }}
+          path: artifacts/native-smoke/smoke-results.json

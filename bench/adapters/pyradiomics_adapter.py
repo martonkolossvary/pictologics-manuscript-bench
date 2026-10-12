@@ -256,12 +256,14 @@ def _prepare_calculation_only(
     if corrected_mask is not None:
         mask = corrected_mask
 
+    morphology_bounding_box = bounding_box
+    intensity_bounding_box = bounding_box
     resegmented_mask = None
     if prepared_settings.get("resegmentRange") is not None:
         resegmented_mask = imageoperations.resegmentMask(
             image, mask, **prepared_settings
         )
-        bounding_box, corrected_mask = imageoperations.checkMask(
+        intensity_bounding_box, corrected_mask = imageoperations.checkMask(
             image, resegmented_mask, **prepared_settings
         )
         if corrected_mask is not None:
@@ -271,6 +273,8 @@ def _prepare_calculation_only(
     shape_mask = (
         resegmented_mask if resegment_shape and resegmented_mask is not None else mask
     )
+    if resegment_shape and resegmented_mask is not None:
+        morphology_bounding_box = intensity_bounding_box
     intensity_mask = (
         resegmented_mask
         if not resegment_shape and resegmented_mask is not None
@@ -283,7 +287,12 @@ def _prepare_calculation_only(
         cropped_image, cropped_mask = imageoperations.cropToTumorMask(
             image,
             class_mask,
-            bounding_box,
+            # Intensity resegmentation may shrink the ROI. Retain the original
+            # morphology bounds unless shape resegmentation was requested;
+            # cropping its original mask to intensity bounds loses shape voxels.
+            morphology_bounding_box
+            if class_name == "shape"
+            else intensity_bounding_box,
             padDistance=0,
         )
         if class_name == "shape":

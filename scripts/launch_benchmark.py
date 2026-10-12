@@ -800,6 +800,7 @@ def build_commands(
     memory_cap_gib: float = 12.0,
     execution_order: str = "adapter-first",
     repeat_timeouts: bool = False,
+    screen_only: bool = False,
 ) -> list[list[str]]:
     if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
         raise ValueError("timeout must be finite and positive")
@@ -894,6 +895,11 @@ def build_commands(
             command.append("--dry-run")
         commands.append(command)
         project_task_offset += pillar_task_counts[pillar]
+    if screen_only:
+        # Keep the complete immutable grid, but stop after one successful
+        # process per configuration (or a recorded exclusion/failure). The
+        # same ledger can later complete its remaining measured repeats.
+        return [[*command, "--execution-phase", "screen"] for command in commands]
     if execution_order == "adapter-first":
         staged = []
         for adapter in workspace["adapter_order"]:
@@ -924,7 +930,7 @@ def _with_observed_project_offset(command: list[str]) -> list[str]:
     return updated
 
 
-def _run_controller_command(command: list[str]) -> int:
+def _run_controller_command(command: list[str], stop_file: Path | None = None) -> int:
     """Forward stop signals and wait for the controller's final checkpoint."""
 
     process: subprocess.Popen[str] | None = None
@@ -961,6 +967,10 @@ def _run_controller_command(command: list[str]) -> int:
             signal.signal(signum, forward_signal)
     try:
         popen_kwargs: dict[str, Any] = {}
+        if stop_file is not None:
+            if stop_file.exists():
+                return 130
+            popen_kwargs["env"] = {**os.environ, "PICTOBENCH_STOP_FILE": str(stop_file)}
         if os.name == "nt":
             popen_kwargs["creationflags"] = getattr(
                 subprocess, "CREATE_NEW_PROCESS_GROUP", 0
@@ -1015,7 +1025,12 @@ def main() -> int:
     parser.add_argument("--execution-order", choices=["adapter-first", "rotated"], default="adapter-first")
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--repeat-timeouts", action="store_true")
+    parser.add_argument(
+        "--screen-only", action="store_true",
+        help="Screen every adapter/configuration once, then stop before remaining repeats; use --execution-order rotated to alternate adapters",
+    )
     parser.add_argument("--confirm")
+    parser.add_argument("--stop-file", type=Path, help="Creating this file requests an orderly background stop; remove it before resuming")
     parser.add_argument(
         "--repeats",
         type=int,
@@ -1098,6 +1113,7 @@ def main() -> int:
         memory_cap_gib=args.memory_cap_gib,
         execution_order=args.execution_order,
         repeat_timeouts=args.repeat_timeouts,
+        screen_only=args.screen_only,
     )
     plan = {
         "workspace_manifest_sha256": sha256_file(root / "workspace_manifest.json"),
@@ -1109,6 +1125,7 @@ def main() -> int:
             else "print_only"
         ),
         "radiomic_calculation_started": bool(args.execute),
+        "screen_only": args.screen_only,
         "machine": {
             "machine_id": machine_id,
             "machine_label": machine_label,
@@ -1180,7 +1197,10 @@ def main() -> int:
         return 0
     try:
         for command in commands:
-            returncode = _run_controller_command(_with_observed_project_offset(command))
+            returncode = _run_controller_command(
+                _with_observed_project_offset(command),
+                args.stop_file.expanduser().resolve() if args.stop_file else None,
+            )
             if returncode != 0:
                 return returncode
         return 0

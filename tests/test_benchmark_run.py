@@ -1773,7 +1773,8 @@ class BenchmarkRunnerTests(unittest.TestCase):
                 args=self.args('--adapters','pictologics','--workloads','texture',
                                '--timeout','5','--repeats','3','--extend-repeats','--resume',
                                '--report-dir',str(report),'--keep-going')
-                if retain:args.append('--repeat-timeouts')
+                if retain:
+                    args.append('--repeat-timeouts')
                 self.assertEqual(run.main(args),0)
                 self.assertEqual(process.call_count,expected_calls)
             with BenchmarkLedger(report/'benchmark.sqlite3') as ledger:

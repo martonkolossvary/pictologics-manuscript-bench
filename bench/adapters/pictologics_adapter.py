@@ -19,6 +19,9 @@ from bench.adapters.protocol import (
 )
 
 
+_TEXTURE_FAMILIES = ("glcm", "glrlm", "glszm", "gldzm", "ngtdm", "ngldm")
+
+
 def _needs_discretisation(families: List[str]) -> bool:
     tokens = set(families)
     return any(
@@ -179,11 +182,6 @@ def _compute_features(
     apply_mask = preprocessing.apply_mask
     discretise_image = preprocessing.discretise_image
     resegment_mask = preprocessing.resegment_mask
-    calculate_all_texture_matrices = feature_api.calculate_all_texture_matrices
-    calculate_glcm_features = feature_api.calculate_glcm_features
-    calculate_gldzm_features = feature_api.calculate_gldzm_features
-    calculate_glrlm_features = feature_api.calculate_glrlm_features
-    calculate_glszm_features = feature_api.calculate_glszm_features
     calculate_intensity_features = feature_api.calculate_intensity_features
     calculate_intensity_histogram_features = (
         feature_api.calculate_intensity_histogram_features
@@ -191,8 +189,6 @@ def _compute_features(
     calculate_ivh_features = feature_api.calculate_ivh_features
     calculate_local_intensity_features = feature_api.calculate_local_intensity_features
     calculate_morphology_features = feature_api.calculate_morphology_features
-    calculate_ngldm_features = feature_api.calculate_ngldm_features
-    calculate_ngtdm_features = feature_api.calculate_ngtdm_features
     calculate_spatial_intensity_features = (
         feature_api.calculate_spatial_intensity_features
     )
@@ -307,75 +303,19 @@ def _compute_features(
             # the one-based discrete grey-level index with unit steps.
             add_features(calculate_ivh_features(disc_values, bin_width=1.0))
 
-    texture_families = {
-        "glcm",
-        "glrlm",
-        "glszm",
-        "gldzm",
-        "ngtdm",
-        "ngldm",
-    }
-    if texture_families.intersection(families) and disc_image is not None and n_bins:
-        mask_arr = intensity_mask.array
-        morphology_mask_arr = mask.array
-        matrices = calculate_all_texture_matrices(
-            disc_image.array,
-            mask_arr,
-            n_bins,
-            distance_mask=morphology_mask_arr,
-            calc_glcm="glcm" in families,
-            calc_glrlm="glrlm" in families,
-            calc_glszm="glszm" in families,
-            calc_gldzm="gldzm" in families,
-            calc_ngtdm="ngtdm" in families,
-            calc_ngldm="ngldm" in families,
+    texture_families = [family for family in _TEXTURE_FAMILIES if family in families]
+    if texture_families and disc_image is not None and n_bins:
+        # The public grouped API preserves 0.7.1's compact shared matrices and
+        # sparse zone calculation. The full-matrix API is a different workload.
+        add_features(
+            feature_api.calculate_all_texture_features(
+                disc_image.array,
+                intensity_mask.array,
+                n_bins,
+                distance_mask_array=mask.array,
+                families=texture_families,
+            )
         )
-        if "glcm" in families:
-            add_features(
-                calculate_glcm_features(
-                    disc_image.array, mask_arr, n_bins, glcm_matrix=matrices["glcm"]
-                )
-            )
-        if "glrlm" in families:
-            add_features(
-                calculate_glrlm_features(
-                    disc_image.array, mask_arr, n_bins, glrlm_matrix=matrices["glrlm"]
-                )
-            )
-        if "glszm" in families:
-            add_features(
-                calculate_glszm_features(
-                    disc_image.array, mask_arr, n_bins, glszm_matrix=matrices["glszm"]
-                )
-            )
-        if "gldzm" in families:
-            add_features(
-                calculate_gldzm_features(
-                    disc_image.array,
-                    mask_arr,
-                    n_bins,
-                    gldzm_matrix=matrices["gldzm"],
-                    distance_mask=morphology_mask_arr,
-                )
-            )
-        if "ngtdm" in families:
-            add_features(
-                calculate_ngtdm_features(
-                    disc_image.array,
-                    mask_arr,
-                    n_bins,
-                    ngtdm_matrices=(matrices["ngtdm_s"], matrices["ngtdm_n"]),
-                )
-            )
-        if "ngldm" in families:
-            add_features(
-                calculate_ngldm_features(
-                    disc_image.array,
-                    mask_arr,
-                    n_bins,
-                    ngldm_matrix=matrices["ngldm"],
-                )
-            )
 
     if families and not features:
         raise RuntimeError(
@@ -467,6 +407,7 @@ def _prepare_calculation_only(
     )
     morphology_bbox = _nonzero_bbox(morphology_mask_arr) if calculate_morphology else None
     disc_array = np.asarray(disc_image.array) if disc_image is not None else None
+    texture_families = [family for family in _TEXTURE_FAMILIES if family in families]
 
     def calculate() -> List[Mapping[object, object]]:
         calculated: List[Mapping[object, object]] = []
@@ -513,83 +454,16 @@ def _prepare_calculation_only(
             else:
                 add(feature_api.calculate_ivh_features(disc_values, bin_width=1.0))
 
-        texture_families = {
-            "glcm",
-            "glrlm",
-            "glszm",
-            "gldzm",
-            "ngtdm",
-            "ngldm",
-        }
-        if (
-            texture_families.intersection(families)
-            and disc_array is not None
-            and n_bins
-        ):
-            matrices = feature_api.calculate_all_texture_matrices(
-                disc_array,
-                mask_arr,
-                n_bins,
-                distance_mask=morphology_mask_arr,
-                calc_glcm="glcm" in families,
-                calc_glrlm="glrlm" in families,
-                calc_glszm="glszm" in families,
-                calc_gldzm="gldzm" in families,
-                calc_ngtdm="ngtdm" in families,
-                calc_ngldm="ngldm" in families,
+        if texture_families and disc_array is not None and n_bins:
+            add(
+                feature_api.calculate_all_texture_features(
+                    disc_array,
+                    mask_arr,
+                    n_bins,
+                    distance_mask_array=morphology_mask_arr,
+                    families=texture_families,
+                )
             )
-            if "glcm" in families:
-                add(
-                    feature_api.calculate_glcm_features(
-                        disc_array, mask_arr, n_bins, glcm_matrix=matrices["glcm"]
-                    )
-                )
-            if "glrlm" in families:
-                add(
-                    feature_api.calculate_glrlm_features(
-                        disc_array,
-                        mask_arr,
-                        n_bins,
-                        glrlm_matrix=matrices["glrlm"],
-                    )
-                )
-            if "glszm" in families:
-                add(
-                    feature_api.calculate_glszm_features(
-                        disc_array,
-                        mask_arr,
-                        n_bins,
-                        glszm_matrix=matrices["glszm"],
-                    )
-                )
-            if "gldzm" in families:
-                add(
-                    feature_api.calculate_gldzm_features(
-                        disc_array,
-                        mask_arr,
-                        n_bins,
-                        gldzm_matrix=matrices["gldzm"],
-                        distance_mask=morphology_mask_arr,
-                    )
-                )
-            if "ngtdm" in families:
-                add(
-                    feature_api.calculate_ngtdm_features(
-                        disc_array,
-                        mask_arr,
-                        n_bins,
-                        ngtdm_matrices=(matrices["ngtdm_s"], matrices["ngtdm_n"]),
-                    )
-                )
-            if "ngldm" in families:
-                add(
-                    feature_api.calculate_ngldm_features(
-                        disc_array,
-                        mask_arr,
-                        n_bins,
-                        ngldm_matrix=matrices["ngldm"],
-                    )
-                )
         if families and not calculated:
             raise RuntimeError(
                 "Pictologics returned zero features for requested families: "
@@ -609,17 +483,28 @@ def _prepare_calculation_only(
 
 
 def _calculation_preparer(families):
-    if "local_intensity" not in families:
-        return None
-    from pictologics.features.intensity import _sphere_offsets_for_radius
+    # Resolve the pinned native hooks before timing; fail closed if they change.
+    clear_caches = []
+    if "local_intensity" in families:
+        from pictologics.features.intensity import _sphere_offsets_for_radius
 
-    # Resolve the pinned native hook before timing; fail closed if it changes.
-    clear = _sphere_offsets_for_radius.cache_clear
+        clear_caches.append(_sphere_offsets_for_radius.cache_clear)
+    if set(families).intersection({"glcm", "glrlm", "ngtdm", "ngldm"}):
+        from pictologics.features.texture import _neighbour_offsets
+
+        clear_caches.append(_neighbour_offsets.cache_clear)
+    if set(families).intersection({"glszm", "gldzm"}):
+        from pictologics.features.texture import _zone_offsets
+
+        clear_caches.append(_zone_offsets.cache_clear)
+    if not clear_caches:
+        return None
 
     def prepare():
         # Geometry construction belongs inside each native calculation. Clearing
         # outside the clock includes reconstruction without timing invalidation.
-        clear()
+        for clear in clear_caches:
+            clear()
 
     return prepare
 
