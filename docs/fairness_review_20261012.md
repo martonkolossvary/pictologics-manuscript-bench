@@ -46,7 +46,7 @@ native implementation actually uses all threads.
 The six partitions are morphology, spatial autocorrelation, local intensity,
 intensity, texture and IVH. Texture remains grouped to preserve legitimate
 native sharing, including Pictologics' shared GLSZM/GLDZM traversal. Native
-feature inventories differ: PyRadiomics has no GLDZM, NGLDM, IVH, local-intensity
+feature inventories differ: PyRadiomics has no GLDZM, IVH, local-intensity
 or spatial-autocorrelation workload here. Include output counts/IBSI coverage
 with runtimes, and compare only matched cases/workloads. An equal-feature
 speedup claim needs an independently specified common-feature experiment.
@@ -64,6 +64,15 @@ on a small nondegenerate fixture. Against an independent anisotropic inverse-
 distance NumPy formula, the spatial pair branch differed by at most 5.2e-18 and
 the forced FFT branch by at most 2.22e-16. These are focused API/math regressions,
 not a replacement for the complete IBSI compliance suite.
+
+All five locked Windows environments subsequently passed every supported
+untimed workload on a small nondegenerate FBN32 fixture: 27 adapter/workload
+checks, with feature counts matching the frozen workload inventories. The full
+controller suite passed 421 tests and 108 subtests (18 optional tests skipped),
+and Ruff and the publication-source audit passed. The copied 283-case workspace
+also passed deep input/provenance validation. Long-path test failures in this
+deep checkout were resolved by using a short temporary root; deployment should
+use short local paths as documented in the handoff guide.
 
 macOS arm64 dependency resolution was checked, but native execution of this
 upgrade must be established by CI and by qualification on the intended Mac.

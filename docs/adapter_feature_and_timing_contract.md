@@ -62,12 +62,12 @@ must be included in every comparative run.
 
 ## Native grouping audit
 
-Pictologics 0.5.1 is the clearest reason for grouped timing. Its pinned
-`calculate_all_texture_matrices` implementation explicitly builds the selected
-GLCM, GLRLM, NGTDM, and NGLDM structures in a shared local pass and performs
-GLSZM and GLDZM through a shared zone traversal. The adapter
-therefore calls that API once for the complete texture workload and then
-derives every selected texture-family output from those matrices.
+Pictologics 0.7.1 uses the public `calculate_all_texture_features` API once for
+the complete texture workload. Its native grouped path preserves compact
+shared matrices and sparse zone processing, including the shared GLSZM/GLDZM
+traversal. Explicit family selection and the unresegmented GLDZM distance mask
+preserve the scientific workload. Cached neighbour and zone geometry are reset
+outside each call so their reconstruction remains inside the calculation clock.
 
 The other adapters retain their own native boundaries:
 
