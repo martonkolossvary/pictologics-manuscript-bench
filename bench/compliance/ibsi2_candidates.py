@@ -139,6 +139,9 @@ def _save_pictologics_image(image: Any, path: Path) -> None:
         affine[:3, axis] = direction[:, axis] * spacing[axis]
     affine[:3, 3] = origin
     affine[3, 3] = 1.0
+    # Pictologics 0.7.1 stores world geometry in LPS, whereas a NIfTI affine
+    # describes RAS. Convert world coordinates, without flipping voxel data.
+    affine[:2, :] *= -1.0
     path.parent.mkdir(parents=True, exist_ok=True)
     nib.save(nib.Nifti1Image(np.asarray(image.array), affine), str(path))
 
@@ -210,6 +213,12 @@ def preprocess_phase2(
 
         image_nifti = nib.load(str(output_image))
         mask_nifti = nib.load(str(output_mask))
+        if dimension == "A":
+            source_nifti = nib.load(str(image_path))
+            if image_nifti.shape != source_nifti.shape or not np.allclose(
+                image_nifti.affine, source_nifti.affine, rtol=0.0, atol=1e-6
+            ):
+                raise RuntimeError("Phase 2 A preprocessing changed the unresampled source grid")
         image_data = np.asarray(image_nifti.dataobj)
         mask_data = np.asarray(mask_nifti.dataobj)
         if image_data.shape != mask_data.shape:
@@ -386,6 +395,14 @@ def _source_fingerprint(root: Path, adapters: Sequence[str]) -> str:
     return fingerprint(
         {str(path.relative_to(root)): sha256_file(path) for path in paths}
     )
+
+
+def _environment_dependencies(adapters: Sequence[str], phases: Sequence[str]) -> tuple[str, ...]:
+    """Phase 2 uses frozen common preprocessing, even without Pictologics extraction."""
+    dependencies = list(adapters)
+    if "phase2" in phases and "pictologics" not in dependencies:
+        dependencies.append("pictologics")
+    return tuple(dependencies)
 
 
 def _load_or_create_state(
@@ -617,14 +634,15 @@ def generate_candidate_bundle(
     if not phases or any(phase not in {"phase1", "phase2"} for phase in phases):
         raise ValueError("phases must contain phase1 and/or phase2")
     bundle.mkdir(parents=True, exist_ok=True)
-    immutable_fingerprint = _source_fingerprint(root, adapters)
+    dependencies = _environment_dependencies(adapters, phases)
+    immutable_fingerprint = _source_fingerprint(root, dependencies)
     state = _load_or_create_state(
         bundle,
         immutable_fingerprint=immutable_fingerprint,
         resume=resume,
     )
     _prepare_bundle_source(root, bundle)
-    environments = _prepare_environment_locks(root, bundle, adapters)
+    environments = _prepare_environment_locks(root, bundle, dependencies)
 
     backend_source = root / "bench" / "compliance" / "ibsi2_native_backends.py"
     protocol_source = root / "bench" / "compliance" / "ibsi2_protocol.py"

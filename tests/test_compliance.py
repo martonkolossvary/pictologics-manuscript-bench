@@ -1121,7 +1121,7 @@ class ComplianceIntegrityTests(unittest.TestCase):
                 load_ibsi2_phase1_candidate_manifest(manifest_path)
             self.assertEqual(
                 configured_adapter_profiles(["pictologics"])["pictologics"]["version"],
-                "0.5.1",
+                PICTOLOGICS_VERSION,
             )
 
     def test_phase1_candidate_manifest_accepts_exact_reviewed_contract(self) -> None:

@@ -15,8 +15,11 @@ The controller is transactional, resumable, checksum-attested, and fail-closed.
 For the Pictologics 0.7.1 update, see the [adapter review](docs/fairness_review_20261012.md),
 [historical timeout boundaries](docs/historical_screening_20261012.md), and
 [screening/background execution and machine handoff](docs/screening_and_handoff.md).
-Start with `--screen-only --execution-order rotated` in a new result root before
-completing the full benchmark. Native environment verification is documented
+Final timing is deferred until the intended Pictologics release is frozen.
+Follow [staged untimed qualification](docs/final_version_readiness.md) and
+[the current spatial/accuracy review](docs/spatial_coverage_20261013.md).
+When timing is authorized, start with `--screen-only --execution-order rotated`
+in a new result root before completing the full benchmark. Native verification is documented
 in [the lock notes](reproducibility/environment-locks/README.md).
 
 ## Repository contract
@@ -66,8 +69,9 @@ texture image, and a mask-specific IVH image. Representation routing is fixed:
 
 These are the largest scientifically valid groups that share both a frozen
 input representation and a comparable scaling class. Reports retain all six
-workloads independently. Spatial autocorrelation is isolated because its
-pairwise algorithm is quadratic in ROI voxels and PyRadiomics does not expose
+workloads independently. Spatial autocorrelation is isolated because pairwise
+implementations are quadratic in ROI voxels (Pictologics also has an exact FFT
+method), and PyRadiomics does not expose
 those features. Local-intensity peaks are isolated because their spherical
 neighbourhood/convolution is distinct from first-order statistics and is also
 not exposed by PyRadiomics. IVH has its own stopwatch because it uses a
