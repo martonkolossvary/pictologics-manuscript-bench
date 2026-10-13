@@ -53,7 +53,6 @@ jobs:
     timeout-minutes: 45
     env:
       PICTOLOGICS_DISABLE_WARMUP: "1"
-      NUMBA_CACHE_DIR: ${{ runner.temp }}/numba-cache
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -74,10 +73,16 @@ jobs:
       - name: Create and verify locked native adapter environments
         run: poetry run python -m bench.cli env create
       - name: Exercise every supported native workload without timing
+        env:
+          NUMBA_CACHE_DIR: ${{ runner.temp }}/numba-cache
         run: poetry run python -m scripts.smoke_adapter_environments
       - name: Qualify adapter calculation endpoints without timing
+        env:
+          NUMBA_CACHE_DIR: ${{ runner.temp }}/numba-cache
         run: poetry run python -m scripts.qualify_adapter_calculations --profiles medimage mirp pyradiomics zrad pictologics
       - name: Qualify spatial definitions and Pictologics algorithm branches without timing
+        env:
+          NUMBA_CACHE_DIR: ${{ runner.temp }}/numba-cache
         run: poetry run python -m scripts.qualify_spatial_statistics
       - uses: actions/upload-artifact@v4
         if: always()
