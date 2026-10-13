@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -66,3 +68,61 @@ def test_fixture_is_anisotropic_nondegenerate_and_spans_identity_ivh(tmp_path):
     assert levels.get_fdata()[mask].min() == 1
     assert levels.get_fdata()[mask].max() == 32
     assert np.isfinite(nib.load(paths["raw"]).get_fdata()).all()
+
+
+def test_qualification_launches_venv_path_instead_of_resolved_base_python(tmp_path, monkeypatch):
+    from bench import env
+
+    runtime_repo = tmp_path / "frozen-runtime"
+    profile_dir = runtime_repo / "configs" / "adapters"
+    profile_dir.mkdir(parents=True)
+    profile_dir.joinpath("pictologics.yaml").write_bytes(
+        (qualification.ROOT / "configs/adapters/pictologics.yaml").read_bytes()
+    )
+    profile = env.load_runtime_profiles()["pictologics"]
+    expected_version = profile.metadata_version or profile.version
+    launcher = str(runtime_repo / ".venvs/adapters/pictologics/bin/python")
+    resolved_base_python = "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12"
+    output_dir = tmp_path / "qualification"
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        if len(calls) == 1:
+            assert kwargs["cwd"] == runtime_repo
+            # Execute the generated verifier against a stub to exercise its
+            # launch-path serialization, including a POSIX-style venv symlink.
+            def verify(actual_profile, *, smoke):
+                assert actual_profile.name == "pictologics"
+                assert smoke is False
+                return {"distribution_metadata_version": expected_version,
+                        "python_executable": resolved_base_python}
+
+            stub = SimpleNamespace(
+                load_runtime_profiles=lambda: {"pictologics": profile},
+                verify_profile=verify,
+                env_dir_for_profile=lambda _: Path(launcher).parent.parent,
+                env_python=lambda _: Path(launcher),
+            )
+            import contextlib
+            import io
+            import bench
+
+            with monkeypatch.context() as patch:
+                patch.setattr(bench, "env", stub)
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    exec(command[2], {})
+            return SimpleNamespace(stdout=stdout.getvalue(), returncode=0)
+        assert command[0] == launcher
+        assert command[0] != resolved_base_python
+        assert kwargs["cwd"] == qualification.ROOT
+        output_dir.joinpath("pictologics.json").write_text(json.dumps({"checks": []}))
+        return SimpleNamespace(stdout="", stderr="", returncode=0)
+
+    monkeypatch.setattr(qualification.subprocess, "run", run)
+    report = qualification.qualify(["pictologics"], output_dir, runtime_repo, 10)
+    assert report["complete"] and report["status"] == "passed"
+    assert report["adapters"][0]["worker_executable"] == launcher
+    assert report["adapters"][0]["environment"]["python_executable"] == resolved_base_python
+    assert len(calls) == 2

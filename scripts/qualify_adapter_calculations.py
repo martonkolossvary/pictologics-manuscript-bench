@@ -314,25 +314,32 @@ def qualify(profiles, output_dir, runtime_repo, timeout):
                 raise ValueError(f"runtime profile differs: {profile_path}")
             verify_command = (
                 "import json; from bench import env; "
-                f"print(json.dumps(env.verify_profile(env.load_runtime_profiles()[{name!r}], smoke=False)))"
+                f"profile = env.load_runtime_profiles()[{name!r}]; "
+                "print(json.dumps(dict("
+                "environment=env.verify_profile(profile, smoke=False), "
+                "worker_executable=str(env.env_python(env.env_dir_for_profile(profile))))))"
             )
             verify_env = dict(os.environ, PYTHONPATH=str(runtime_repo))
             verified = subprocess.run(
                 [sys.executable, "-c", verify_command], cwd=runtime_repo,
                 env=verify_env, text=True, capture_output=True, check=True, timeout=timeout,
             )
-            provenance = json.loads(verified.stdout)
+            verified_runtime = json.loads(verified.stdout)
+            provenance = verified_runtime["environment"]
             expected_version = profile.metadata_version or profile.version
             if provenance["distribution_metadata_version"] != expected_version:
                 raise ValueError("verified runtime version differs from current profile")
             record["environment"] = provenance
+            # Provenance resolves the executable for identity. On POSIX that
+            # follows bin/python out of the venv, so it is not a launch path.
+            record["worker_executable"] = verified_runtime["worker_executable"]
             worker_path = output_dir / f"{name}.json"
             child_env = dict(os.environ, PYTHONPATH=str(ROOT))
             child_env["PICTOLOGICS_DISABLE_WARMUP"] = "1"
             for key in ("PICTOLOGICS_NUM_THREADS", "NUMBA_NUM_THREADS", "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"):
                 child_env[key] = "1"
             completed = subprocess.run(
-                [provenance["python_executable"], "-m", "scripts.qualify_adapter_calculations",
+                [record["worker_executable"], "-m", "scripts.qualify_adapter_calculations",
                  "--worker", name, "--fixture", str(fixture_path), "--output-dir", str(output_dir)],
                 cwd=ROOT, env=child_env, text=True, capture_output=True, timeout=timeout,
             )
