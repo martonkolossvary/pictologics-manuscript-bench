@@ -16,7 +16,9 @@ from bench.compliance.evaluate import (
     evaluate_adapter_payload,
 )
 from bench.compliance.models import ComparisonRecord, ReferenceRecord
+from bench.compliance.ibsi2_native_backends import normalize_parameters
 from bench.compliance.ibsi2_protocol import (
+    IBSI2_PHASE2_BOUNDARY_POLICY,
     IBSI2_PROTOCOL_REVIEW,
     PHASE1_FILTER_SPECS_BY_ID,
     PHASE2_FILTER_SPECS_BY_ID,
@@ -73,6 +75,7 @@ from bench.compliance.run import (
     IBSI2_CANDIDATE_SCHEMA_VERSION,
     _json_safe_payload,
     _prepare_state,
+    _validate_ibsi2_execution_contract,
     _validate_official_ibsi1_digital_phantom,
     _validate_compliance_payload,
     configured_adapter_profiles,
@@ -670,6 +673,95 @@ class StrictEvaluationTests(unittest.TestCase):
             self.assertTrue(result["passed"])
 
 
+class PictologicsCapabilityContractTests(unittest.TestCase):
+    """Capability-schema compatibility must not bypass execution provenance."""
+
+    def _contract(self, root: Path, phase: str, schema_version: object):
+        specification = (
+            PHASE1_FILTER_SPECS_BY_ID["1.a.1"]
+            if phase == "phase1"
+            else PHASE2_FILTER_SPECS_BY_ID["2.B"]
+        )
+        config = specification.filter_config()
+        config_path = root / "filter.json"
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        parameters = normalize_parameters(config["parameters"], adapter="pictologics")
+        boundary = parameters["boundary"]
+        entry = {
+            "executed_parameters": parameters,
+            "boundary_execution": {
+                "policy": (
+                    "protocol_explicit" if "boundary" in config["parameters"]
+                    else IBSI2_PHASE2_BOUNDARY_POLICY
+                ),
+                "selected": boundary,
+                "effective": boundary,
+                "implementation": "as_specified",
+            },
+            "native_capability": {
+                "schema_version": schema_version,
+                "filter": parameters["filter"],
+                "input_dimensionality": [3],
+                "kernel_dimensionality": 3,
+                "slice_plane_execution": False,
+                "orthogonal_plane_averaging": False,
+                "structure_tensor_steering": False,
+                "anisotropic_spacing": (
+                    "supported" if parameters["filter"] == "log" else "not_applicable"
+                ),
+                "rotation_pooling": [],
+                "supported_boundaries": ["ZERO", "NEAREST", "PERIODIC", "MIRROR"],
+                "effective_boundary": "as_specified",
+                "supported_riesz_orders": None,
+            },
+        }
+        return entry, config_path
+
+    def test_reviewed_schemas_accept_both_phase_contracts_without_rewriting(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            for phase in ("phase1", "phase2"):
+                for version in ("1.0.0", "1.1.0"):
+                    with self.subTest(phase=phase, version=version):
+                        entry, config = self._contract(Path(temporary), phase, version)
+                        original = json.dumps(entry, sort_keys=True)
+                        _validate_ibsi2_execution_contract(
+                            entry, adapter="pictologics", filter_config_path=config,
+                            context=phase,
+                        )
+                        self.assertEqual(json.dumps(entry, sort_keys=True), original)
+
+    def test_unreviewed_or_malformed_capability_schemas_are_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            for phase in ("phase1", "phase2"):
+                for version in (None, 1, ["1.1.0"], "1.0.1", "1.2.0", "2.0.0"):
+                    with self.subTest(phase=phase, version=version):
+                        entry, config = self._contract(Path(temporary), phase, version)
+                        with self.assertRaisesRegex(ValueError, "capability identity"):
+                            _validate_ibsi2_execution_contract(
+                                entry, adapter="pictologics", filter_config_path=config,
+                                context=phase,
+                            )
+
+    def test_new_schema_preserves_capability_and_boundary_drift_checks(self):
+        mutations = (
+            ("filter", "gabor"), ("input_dimensionality", [2]),
+            ("kernel_dimensionality", 2), ("slice_plane_execution", True),
+            ("orthogonal_plane_averaging", True), ("structure_tensor_steering", True),
+            ("supported_boundaries", []), ("effective_boundary", "periodic"),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            for phase in ("phase1", "phase2"):
+                for field, value in mutations:
+                    with self.subTest(phase=phase, field=field):
+                        entry, config = self._contract(Path(temporary), phase, "1.1.0")
+                        entry["native_capability"][field] = value
+                        with self.assertRaises(ValueError):
+                            _validate_ibsi2_execution_contract(
+                                entry, adapter="pictologics", filter_config_path=config,
+                                context=phase,
+                            )
+
+
 class ComplianceIntegrityTests(unittest.TestCase):
     def test_ibsi1_runner_accepts_only_the_pinned_official_phantom(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -824,7 +916,7 @@ class ComplianceIntegrityTests(unittest.TestCase):
                         "implementation": "as_specified",
                     },
                     "native_capability": {
-                        "schema_version": "1.0.0",
+                        "schema_version": "1.1.0",
                         "filter": "mean",
                         "supported_boundaries": [
                             "ZERO",

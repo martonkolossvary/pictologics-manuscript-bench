@@ -611,8 +611,11 @@ def _validate_ibsi2_execution_contract(
         return
     if not isinstance(capability, Mapping):
         raise ValueError(f"{context} lacks Pictologics capability provenance")
+    # Reviewed schema 1.1.0 adds the Gaussian filter entry without changing the
+    # existing filter records. Preserve the recorded version and validate the
+    # same execution fields below; unreviewed schema versions remain rejected.
     if (
-        capability.get("schema_version") != "1.0.0"
+        capability.get("schema_version") not in ("1.0.0", "1.1.0")
         or capability.get("filter") != expected_parameters["filter"]
     ):
         raise ValueError(f"{context} Pictologics capability identity is inconsistent")
