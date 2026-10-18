@@ -18,9 +18,16 @@ For the Pictologics 0.7.1 update, see the [adapter review](docs/fairness_review_
 Final timing is deferred until the intended Pictologics release is frozen.
 Follow [staged untimed qualification](docs/final_version_readiness.md) and
 [the current spatial/accuracy review](docs/spatial_coverage_20261013.md).
-When timing is authorized, start with `--screen-only --execution-order rotated`
-in a new result root before completing the full benchmark. Native verification is documented
-in [the lock notes](reproducibility/environment-locks/README.md).
+The [final-run preset](docs/final_run_preset.md) freezes rotated order, repeats,
+threads and resource limits without starting timing. The
+[release qualification workflow](docs/unified_release_qualification.md) combines the
+untimed checks and version comparison; [robustness checks](docs/adapter_robustness.md)
+cover synthetic modality and geometry fixtures. The
+[Pictologics feedback package](docs/pictologics_release_feedback.md) provides an
+untimed memory-policy reproducer and acceptance checks.
+Use a fresh result root for eventual final timing. Exploratory screening remains
+available with `--screen-only --execution-order rotated` outside the final preset.
+Native verification is documented in [the lock notes](reproducibility/environment-locks/README.md).
 
 ## Repository contract
 

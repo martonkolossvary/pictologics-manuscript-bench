@@ -5,6 +5,14 @@ the exploratory 0.7.1 screening evidence separately. A screening measurement
 belongs to its recorded release, source, machine and resource policy; it is
 not automatically a final-release observation.
 
+Use the [release qualification command](unified_release_qualification.md) to collect a
+fresh untimed assessment and compare it with a saved same-platform baseline.
+The [robustness suite](adapter_robustness.md) adds synthetic modality, geometry
+and degenerate-ROI checks. The [final-run preset](final_run_preset.md) prepares
+the later common timing protocol, and the
+[Pictologics feedback package](pictologics_release_feedback.md) checks its
+Windows spatial-memory policy without running large calculations.
+
 ## Freeze the stable adapters
 
 Keep PyRadiomics, MIRP, MEDimage and Z-Rad at their reviewed profile and native

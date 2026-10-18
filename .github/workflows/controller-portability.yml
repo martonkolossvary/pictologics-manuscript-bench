@@ -72,23 +72,23 @@ jobs:
           assert not missing, f'No native environment lock for {missing}'"
       - name: Create and verify locked native adapter environments
         run: poetry run python -m bench.cli env create
-      - name: Exercise every supported native workload without timing
+      - name: Collect complete untimed core qualification and retain review findings
+        shell: pwsh
         env:
           NUMBA_CACHE_DIR: ${{ runner.temp }}/numba-cache
-        run: poetry run python -m scripts.smoke_adapter_environments
-      - name: Qualify adapter calculation endpoints without timing
-        env:
-          NUMBA_CACHE_DIR: ${{ runner.temp }}/numba-cache
-        run: poetry run python -m scripts.qualify_adapter_calculations --profiles medimage mirp pyradiomics zrad pictologics
-      - name: Qualify spatial definitions and Pictologics algorithm branches without timing
-        env:
-          NUMBA_CACHE_DIR: ${{ runner.temp }}/numba-cache
-        run: poetry run python -m scripts.qualify_spatial_statistics
+        run: |
+          poetry run python -m scripts.qualify_release --scope core --output-dir artifacts/release-qualification
+          $qualificationExit = $LASTEXITCODE
+          if ($qualificationExit -notin 0, 2) { exit $qualificationExit }
+          $assessment = Get-Content artifacts/release-qualification/release-qualification.json -Raw | ConvertFrom-Json
+          if (-not $assessment.complete) { throw 'Untimed qualification is incomplete' }
+          if ($qualificationExit -eq 2) {
+            if ($assessment.status -ne 'needs_review') { throw 'Unexpected qualification result' }
+            Write-Output '::notice::Untimed diagnostics completed with review findings; inspect release-qualification.json. This job does not certify accuracy or timing readiness.'
+          }
+          exit 0
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: native-smoke-${{ matrix.os }}
-          path: |
-            artifacts/native-smoke/smoke-results.json
-            artifacts/calculation-qualification/
-            artifacts/spatial-qualification/
+          name: untimed-qualification-${{ matrix.os }}
+          path: artifacts/release-qualification/

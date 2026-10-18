@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "preset_id": "final-calculation-only-v1",
+  "execution_order": "rotated",
+  "adapter_order": ["pictologics", "pyradiomics", "mirp", "medimage", "zrad"],
+  "fresh_process_repeats": 3,
+  "measured_observations_per_process": 3,
+  "timeout_seconds": 900.0,
+  "timeout_scope": "whole_task_elapsed_wall_time",
+  "memory_cap_gib": 12.0,
+  "thread_policy": "all_physical_cores_per_isolated_task",
+  "input_contract": "manifest_harmonized",
+  "repeat_timeouts": false,
+  "screen_only": false
+}

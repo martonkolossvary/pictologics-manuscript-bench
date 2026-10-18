@@ -41,6 +41,9 @@ PILLARS = (
     ("pillar2_whole_anatomy", "pillar2_a1"),
     ("pillar3_ibsi2_phase3", "ibsi2_phase3"),
 )
+FINAL_RUN_PRESET_PATH = (
+    Path(__file__).resolve().parents[1] / "configs" / "benchmark" / "final_run.json"
+)
 
 
 MACHINE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -52,6 +55,83 @@ PMSET_MODE_ATTEMPTS = 30
 PMSET_MODE_RETRY_SECONDS = 0.5
 ES_SYSTEM_REQUIRED = 0x00000001
 ES_CONTINUOUS = 0x80000000
+
+
+def load_final_run_preset() -> dict[str, Any]:
+    """Return the reviewed final protocol and its content identity."""
+
+    path = FINAL_RUN_PRESET_PATH
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+        raise ValueError("unsupported final-run preset")
+    if not payload.get("preset_id"):
+        raise ValueError("final-run preset is missing its identity")
+    # These policies are supplied by the engine, not adjustable launcher flags.
+    supported = {
+        "thread_policy": "all_physical_cores_per_isolated_task",
+        "input_contract": "manifest_harmonized",
+        "timeout_scope": "whole_task_elapsed_wall_time",
+        "repeat_timeouts": False,
+        "screen_only": False,
+    }
+    for field, expected in supported.items():
+        if payload.get(field) != expected:
+            raise ValueError(f"unsupported final-run preset policy: {field}")
+    return {"path": str(path), "sha256": sha256_file(path), "payload": payload}
+
+
+def _resolve_launch_options(
+    args: argparse.Namespace,
+    preset: dict[str, Any] | None,
+) -> None:
+    """Resolve opt-in protocol values without changing legacy CLI defaults."""
+
+    defaults = {
+        "timeout": 900.0,
+        "memory_cap_gib": 12.0,
+        "execution_order": "adapter-first",
+        "repeats": None,
+    }
+    if preset is not None:
+        if args.host_profile is None or args.result_root is None:
+            raise ValueError("--preset final requires --host-profile and --result-root")
+        if args.screen_only or args.repeat_timeouts:
+            raise ValueError(
+                "--screen-only and --repeat-timeouts conflict with the final-run preset"
+            )
+        payload = preset["payload"]
+        defaults.update(
+            timeout=payload["timeout_seconds"],
+            memory_cap_gib=payload["memory_cap_gib"],
+            execution_order=payload["execution_order"],
+            repeats=payload["fresh_process_repeats"],
+        )
+    for field, default in defaults.items():
+        supplied = getattr(args, field)
+        if preset is not None and supplied is not None and supplied != default:
+            raise ValueError(
+                f"--{field.replace('_', '-')} conflicts with the final-run preset"
+            )
+        if supplied is None:
+            setattr(args, field, default)
+    if args.result_root is None:
+        args.result_root = "results/benchmark"
+
+
+def _validate_preset_workspace(
+    preset: dict[str, Any],
+    workspace: dict[str, Any],
+    host_profile: dict[str, Any],
+) -> None:
+    payload = preset["payload"]
+    for field in ("fresh_process_repeats", "measured_observations_per_process"):
+        if workspace["task_inventory"].get(field) != payload[field]:
+            raise ValueError(f"workspace {field} conflicts with the final-run preset")
+    if workspace.get("adapter_order") != payload["adapter_order"]:
+        raise ValueError("workspace adapter order conflicts with the final-run preset")
+    settings = host_profile["payload"]["benchmark_settings"]
+    if settings.get("thread_policy") != payload["thread_policy"]:
+        raise ValueError("host thread policy conflicts with the final-run preset")
 
 
 def _portable_command(
@@ -995,7 +1075,11 @@ def _run_controller_command(command: list[str], stop_file: Path | None = None) -
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workspace-root", default="data/benchmark")
-    parser.add_argument("--result-root", default="results/benchmark")
+    parser.add_argument("--result-root", default=None)
+    parser.add_argument(
+        "--preset", choices=["final"],
+        help="Use the reviewed final-run protocol; requires host profile and result root",
+    )
     parser.add_argument(
         "--machine-id",
         default=None,
@@ -1020,9 +1104,9 @@ def main() -> int:
         action="store_true",
         help="Invoke each controller with --dry-run; no adapter calculation occurs",
     )
-    parser.add_argument("--timeout", type=float, default=900.0, help="Total wall-time limit per task in seconds")
-    parser.add_argument("--memory-cap-gib", type=float, default=12.0, help="Combined worker memory cap; reduced when available RAM is lower")
-    parser.add_argument("--execution-order", choices=["adapter-first", "rotated"], default="adapter-first")
+    parser.add_argument("--timeout", type=float, default=None, help="Total wall-time limit per task in seconds (default: 900)")
+    parser.add_argument("--memory-cap-gib", type=float, default=None, help="Combined worker memory cap (default: 12 GiB); reduced when available RAM is lower")
+    parser.add_argument("--execution-order", choices=["adapter-first", "rotated"], default=None, help="Default: adapter-first; final preset: rotated")
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--repeat-timeouts", action="store_true")
     parser.add_argument(
@@ -1042,6 +1126,11 @@ def main() -> int:
         parser.error("--execute requires --confirm CALCULATE")
     if args.execute and args.validate_plans:
         parser.error("choose either --execute or --validate-plans")
+    preset = load_final_run_preset() if args.preset else None
+    try:
+        _resolve_launch_options(args, preset)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     windows_sleep_prevention_active = (
         _enable_windows_sleep_prevention() if args.execute else False
@@ -1052,6 +1141,11 @@ def main() -> int:
     root = Path(args.workspace_root).expanduser().resolve()
     workspace = _load_workspace(root)
     host_profile = _load_host_profile(args.host_profile) if args.host_profile else None
+    if preset is not None:
+        try:
+            _validate_preset_workspace(preset, workspace, host_profile)
+        except ValueError as exc:
+            parser.error(str(exc))
     machine_id = _validate_machine_id(
         _profile_value(
             args.machine_id,
@@ -1094,6 +1188,14 @@ def main() -> int:
     if (args.execute or args.validate_plans) and preflight["status"] != "pass":
         parser.error("execution preflight failed: " + "; ".join(preflight["errors"]))
     host_settings = _effective_host_settings(host_profile, preflight)
+    preset_identity = (
+        {"preset_id": preset["payload"]["preset_id"], "sha256": preset["sha256"]}
+        if preset is not None else None
+    )
+    if preset_identity is not None:
+        # Existing immutable host settings bind this identity to the run without
+        # altering historical RunSpec schemas or relaxing resume checks.
+        host_settings["benchmark_preset"] = preset_identity
     commands = build_commands(
         root,
         workspace,
@@ -1126,6 +1228,10 @@ def main() -> int:
         ),
         "radiomic_calculation_started": bool(args.execute),
         "screen_only": args.screen_only,
+        "run_preset": (
+            {**preset_identity, "protocol": preset["payload"]}
+            if preset_identity is not None else None
+        ),
         "machine": {
             "machine_id": machine_id,
             "machine_label": machine_label,
@@ -1188,6 +1294,7 @@ def main() -> int:
             "radiomic_calculation_started": False,
             "workspace_manifest_sha256": plan["workspace_manifest_sha256"],
             "machine": plan["machine"],
+            "run_preset": plan["run_preset"],
             "execution_preflight": preflight,
             "plans": validated,
         }
