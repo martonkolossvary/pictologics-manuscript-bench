@@ -1,0 +1,55 @@
+--- a/pictologics/features/intensity.py
++++ b/pictologics/features/intensity.py
+@@ -1463,14 +1463,47 @@
+ _PAIR_SECONDS_PER_THREAD = 2.5e-9
+ 
+ 
++def _physical_memory_bytes() -> int:
++    """OS-visible physical RAM, using a native Windows query when needed."""
++    if os.name == "nt":
++        import ctypes
++        from ctypes import wintypes
++
++        class MemoryStatus(ctypes.Structure):
++            _fields_ = [
++                ("length", wintypes.DWORD), ("load", wintypes.DWORD),
++                *[(name, ctypes.c_ulonglong) for name in (
++                    "total", "available", "total_pagefile", "available_pagefile",
++                    "total_virtual", "available_virtual", "extended_virtual")],
++            ]
++
++        status = MemoryStatus()
++        status.length = ctypes.sizeof(status)
++        query = ctypes.WinDLL("kernel32", use_last_error=True).GlobalMemoryStatusEx
++        query.argtypes = [ctypes.POINTER(MemoryStatus)]
++        query.restype = wintypes.BOOL
++        if not query(ctypes.byref(status)):
++            raise ctypes.WinError(ctypes.get_last_error())
++        physical = int(status.total)
++    else:
++        page_size = os.sysconf("SC_PAGE_SIZE")
++        pages = os.sysconf("SC_PHYS_PAGES")
++        if page_size <= 0 or pages <= 0:
++            raise ValueError("Invalid physical memory page information")
++        physical = page_size * pages
++    if physical <= 0:
++        raise ValueError("Invalid total physical memory")
++    return physical
++
++
+ def _fft_memory_cap() -> int:
+-    """Memory limit of the FFT sums: 16 GB, but at most half of the physical memory.
+-
+-    When the system does not report its memory (for example on Windows), the limit
+-    assumes 8 GB of memory.
++    """FFT workspace cap: at most 16 GiB and half of OS-visible physical RAM.
++
++    Assume 8 GiB only if the platform query is unavailable, fails or is invalid.
++    This is not a reservation or a limit on the entire process.
+     """
+     try:
+-        physical = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
++        physical = _physical_memory_bytes()
+     except (AttributeError, OSError, ValueError):
+         physical = 8 << 30
+     return min(16 << 30, physical // 2)

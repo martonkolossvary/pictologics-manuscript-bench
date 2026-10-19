@@ -119,6 +119,9 @@ cross-platform RAM query, conservative fallback, half-RAM/16-GiB boundaries,
 forced pairwise/FFT agreement and final-release acceptance checks. Keep P1 open
 until those checks succeed under the reviewed release policy on Windows and
 the intended Mac. A documented disposition alone is not acceptance.
+The [further Windows investigation](windows_ram_investigation_20261019.md)
+identifies 20 affected case geometries and provides an uninstalled patch, while
+retaining the separate whole-process memory-budget acceptance requirement.
 
 ## Diagnostic correction
 

@@ -28,6 +28,8 @@ untimed checks and version comparison; [robustness checks](docs/adapter_robustne
 cover synthetic modality and geometry fixtures. The
 [Pictologics feedback package](docs/pictologics_release_feedback.md) provides an
 untimed memory-policy reproducer and acceptance checks.
+The [Windows RAM investigation](docs/windows_ram_investigation_20261019.md)
+records the actual affected cases and a review-only upstream patch.
 Use a fresh result root for eventual final timing. Exploratory screening remains
 available with `--screen-only --execution-order rotated` outside the final preset.
 Native verification is documented in [the lock notes](reproducibility/environment-locks/README.md).

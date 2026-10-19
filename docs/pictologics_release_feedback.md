@@ -5,6 +5,10 @@ below are untimed and preserve the paused benchmark ledger.
 The [finding register](finding_dispositions_20261019.md) tracks this as P1:
 pending upstream resolution and final-release acceptance, with no benchmark
 monkeypatch or waiver of the recorded policy failure.
+The [machine investigation](windows_ram_investigation_20261019.md) confirms the
+Windows query, identifies 20 actual case geometries affected by the cap, and
+provides a tested, uninstalled Windows patch. It also distinguishes the native
+FFT workspace cap from the benchmark's smaller whole-process budget.
 
 ## Reproducer and evidence
 
