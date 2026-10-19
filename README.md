@@ -19,6 +19,8 @@ Final timing is deferred until the intended Pictologics release is frozen.
 Follow [staged untimed qualification](docs/final_version_readiness.md) and
 [the spatial/accuracy review](docs/spatial_coverage_20261013.md), with updated
 [untimed readiness evidence](docs/untimed_readiness_20261018.md).
+The [finding dispositions](docs/finding_dispositions_20261019.md) record how
+accuracy differences, degenerate inputs and the RAM-policy issue are reported.
 The [final-run preset](docs/final_run_preset.md) freezes rotated order, repeats,
 threads and resource limits without starting timing. The
 [release qualification workflow](docs/unified_release_qualification.md) combines the

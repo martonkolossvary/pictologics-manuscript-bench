@@ -278,17 +278,6 @@ def validate_fixtures(fixtures, *, include_real=False, inspect_images=True):
     return _digest(fixtures)
 
 
-def _is_input_rejection(error):
-    """Observe domain errors, but fail programming/import/IO errors explicitly."""
-    if isinstance(error, EquivalenceError):
-        return False
-    if isinstance(error, (ValueError, FloatingPointError, ZeroDivisionError)):
-        return True
-    return isinstance(error, RuntimeError) and any(token in str(error).lower() for token in (
-        "finite scalar", "non-finite", "zero features", "empty", "roi", "mask", "singular", "qhull",
-    ))
-
-
 def _invalid_empty_features(finite):
     # Zero voxel-counting volume is well-defined even when no ROI exists.
     # Do not generalize this exception to other finite empty-ROI features.
@@ -297,6 +286,10 @@ def _invalid_empty_features(finite):
 
 def _native_error_outcome(adapter, fixture, workload, error_type, error_module, message):
     """Recognize only observed, scoped native input limits, never arbitrary bugs."""
+    from bench.adapters.registry import get_adapter
+
+    if not get_adapter(adapter).supports_workload(workload):
+        return None
     if adapter == "zrad" and error_type == "DataStructureError" and error_module == "zrad.exceptions":
         expected = set()
         if fixture in {"small_roi", "single_voxel_roi"}:
@@ -309,9 +302,8 @@ def _native_error_outcome(adapter, fixture, workload, error_type, error_module, 
                              "ivh": {"Intensity range is zero."}}.get(workload, set()))
         if message in expected:
             return "characterized_rejection", None
-    if (adapter == "mirp" and fixture == "empty_roi" and error_type == "RuntimeError" and
-            message == "MIRP native loading expected exactly one image"):
-        return "characterized_rejection", None
+    if error_module != "builtins":
+        return None
     if adapter == "medimage" and error_type == "RuntimeError":
         histogram_error = (fixture in {"constant_roi", "single_voxel_roi"} and workload == "texture" and
                            message == "MEDimage failed supported feature family histogram: index 1 is out of bounds for axis 0 with size 1")
@@ -319,6 +311,55 @@ def _native_error_outcome(adapter, fixture, workload, error_type, error_module, 
                             message == "MEDimage failed supported feature family morphology: 0-dimensional array given. Array must be at least two-dimensional")
         if histogram_error or covariance_error:
             return "needs_review", "native_degenerate_error"
+
+    # These are observations from the locked Windows/macOS environments. A
+    # different message or feature requires review, even for a ValueError or
+    # an exception containing words such as "ROI", "mask", or "non-finite".
+    expected = None
+    if adapter == "medimage":
+        if fixture == "empty_roi":
+            expected = "RuntimeError", "Mask is empty"
+        elif fixture == "small_roi" and workload == "ivh":
+            expected = "ValueError", "Invalid MEDimage feature 'Fivh_I10': feature output is empty"
+        elif fixture in {"constant_roi", "single_voxel_roi"}:
+            expected = {
+                "spatial_autocorrelation": ("ValueError", "Invalid MEDimage feature 'Fmorph_moran_i': feature output is not finite"),
+                "intensity": ("ValueError", "Invalid MEDimage feature 'Fstat_skew': feature output is not finite"),
+                "ivh": ("ValueError", "Invalid MEDimage feature 'Fivh_V10': feature output is empty"),
+            }.get(workload)
+    elif adapter == "mirp":
+        if fixture == "empty_roi":
+            expected = "RuntimeError", "MIRP native loading expected exactly one image"
+        elif fixture in {"constant_roi", "single_voxel_roi"}:
+            if workload == "ivh":
+                expected = "ValueError", "MIRP identity IVH requires at least two integer levels"
+            else:
+                feature = ({"texture": "cm_inv_var_d1_3d_v_mrg"} if fixture == "constant_roi" else {
+                    "morphology": "morph_vol_dens_mvee", "spatial_autocorrelation": "morph_vol_dens_mvee",
+                    "texture": "cm_joint_max_d1_3d_v_mrg",
+                }).get(workload)
+                if feature:
+                    expected = "RuntimeError", f"MIRP returned a non-finite calculated feature '{feature}': np.float64(nan)"
+    elif adapter == "pictologics":
+        if fixture in {"constant_roi", "single_voxel_roi", "empty_roi"} and workload == "spatial_autocorrelation":
+            expected = "RuntimeError", "Pictologics feature morans_i_index_N365 is not one finite scalar"
+        elif fixture in {"constant_roi", "single_voxel_roi"} and workload == "texture":
+            expected = "RuntimeError", "Pictologics feature maximum_histogram_gradient_12CE is not one finite scalar"
+        elif fixture == "empty_roi":
+            if workload in {"local_intensity", "intensity"}:
+                expected = "RuntimeError", f"Pictologics returned zero features for requested families: {workload}"
+            elif workload in {"texture", "ivh"}:
+                expected = "ValueError", "Identity discretization requires a non-empty ROI"
+    elif adapter == "pyradiomics":
+        if fixture == "single_voxel_roi":
+            expected = "ValueError", "mask only contains 1 segmented voxel! Cannot extract features for a single voxel."
+        elif fixture == "empty_roi":
+            expected = "ValueError", ("Identity discretization requires a non-empty ROI" if workload == "texture" else
+                                      "No labels found in this mask (i.e. nothing is segmented)!")
+    elif adapter == "zrad" and fixture == "empty_roi" and workload in {"texture", "ivh"}:
+        expected = "ValueError", "Z-Rad identity emulation requires finite positive-integer ROI grey levels with minimum 1"
+    if expected is not None and (error_type, message) == expected:
+        return "characterized_rejection", None
     return None
 
 
@@ -406,8 +447,8 @@ def worker(adapter_name, fixtures, output, report_id=None):
                                                            type(error).__name__, type(error).__module__, str(error))
                     if fixture["kind"] == "degenerate" and stage in {
                         "public_reference_and_preparation", "prepared_calculation"
-                    } and (native_outcome is not None or _is_input_rejection(error)):
-                        record["status"], finding = native_outcome or ("characterized_rejection", None)
+                    } and native_outcome is not None:
+                        record["status"], finding = native_outcome
                         if finding:
                             record["finding"] = finding
                         record["equivalence_verified"] = False
@@ -468,14 +509,15 @@ def validate_worker_report(result, adapter_name, fixtures, *, expected_version, 
         if (status == "characterized_rejection" or status == "needs_review" and
                 check.get("finding") == "native_degenerate_error") and fixture["kind"] == "degenerate":
             if (check.get("equivalence_verified") is not False or not check.get("error") or
-                    not check.get("error_type") or check.get("error_stage") not in {
+                    not check.get("error_type") or not check.get("error_module") or
+                    not check.get("error_message") or check.get("error_stage") not in {
                         "public_reference_and_preparation", "prepared_calculation"}):
                 raise ValueError("rejection evidence is incomplete")
-            if status == "needs_review" and _native_error_outcome(
+            if _native_error_outcome(
                 adapter_name, check["fixture"], check["workload"], check.get("error_type"),
                 check.get("error_module"), check.get("error_message")
-            ) != ("needs_review", "native_degenerate_error"):
-                raise ValueError("native error finding does not match observed input limit")
+            ) != (status, check.get("finding")):
+                raise ValueError("native error finding or rejection does not match observed input limit")
             continue
         if check.get("equivalence_verified") is not True:
             raise ValueError("public/prepared/repeat equivalence is missing")

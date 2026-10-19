@@ -58,6 +58,12 @@ values, agreement with the public path, and agreement on repeated calculation.
 Any missing feature, mismatch, unexpected exception or watchdog interruption
 fails the diagnostic.
 
+Recognized rejections must match an observed adapter, supported workload,
+fixture, exception class/module and exact message. Generic exception types or
+words such as `ROI` and `mask` never suffice. Saved reports undergo the same
+classification check. See the [finding dispositions](finding_dispositions_20261019.md)
+for the reporting decisions and stricter classifier introduced on 2026-10-19.
+
 Degenerate inputs have separate outcomes:
 
 | Outcome | Meaning |

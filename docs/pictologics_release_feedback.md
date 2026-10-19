@@ -2,6 +2,9 @@
 
 This is a prepared upstream feedback draft, not a submitted issue. All checks
 below are untimed and preserve the paused benchmark ledger.
+The [finding register](finding_dispositions_20261019.md) tracks this as P1:
+pending upstream resolution and final-release acceptance, with no benchmark
+monkeypatch or waiver of the recorded policy failure.
 
 ## Reproducer and evidence
 

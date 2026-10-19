@@ -26,6 +26,8 @@ The five IBSI 1 numerical differences remain PyRadiomics least-axis length,
 Z-Rad global intensity peak and three Z-Rad histogram-gradient features. Their
 interpretation is documented in the [earlier accuracy review](spatial_coverage_20261013.md).
 No numerical failures were found among the evaluated standardized IBSI 2 rows.
+The subsequent [finding dispositions](finding_dispositions_20261019.md) retain
+these failures and specify their treatment in accuracy and future timing reports.
 Nonstandardized calculations remain separate: Phase 1 defines 36 tests per
 adapter, and Phase 2 defines 396 calculations per adapter. The table deliberately
 does not equate complete execution with full native coverage or certification.

@@ -126,8 +126,12 @@ def test_worker_records_exact_inventory_and_separates_finite_empty_and_undefined
 
 
 @pytest.mark.parametrize("error,expected", [
-    (ValueError("input has no usable ROI"), "characterized_rejection"),
-    (RuntimeError("feature is not one finite scalar"), "characterized_rejection"),
+    (ValueError("input has no usable ROI"), "failed"),
+    (ValueError("operands could not be broadcast together"), "failed"),
+    (FloatingPointError("unexpected numerical operation"), "failed"),
+    (ZeroDivisionError("unexpected divisor"), "failed"),
+    (RuntimeError("feature is not one finite scalar"), "failed"),
+    (RuntimeError("mask cache has inconsistent dimensions"), "failed"),
     (ImportError("missing dependency"), "failed"),
     (AttributeError("API changed"), "failed"),
     (RuntimeError("unexpected implementation failure"), "failed"),
@@ -142,6 +146,45 @@ def test_worker_does_not_disguise_unexpected_errors_as_undefined(tmp_path, monke
     assert {check["status"] for check in records} == {expected}
     assert all(check["error_stage"] == "public_reference_and_preparation" for check in records)
     assert len(result["checks"]) == 60
+
+
+@pytest.mark.parametrize("mutation", [None, "message", "module", "type", "missing_module", "workload", "stage", "finding"])
+def test_observed_rejection_is_verified_again_when_loading_saved_evidence(tmp_path, monkeypatch, fixtures, mutation):
+    stub_worker(monkeypatch)
+    original = robustness.calculations._pictologics
+
+    def prepare(paths, families, workload, discrete):
+        if Path(paths["raw"]).parent.name == "constant_roi" and workload == "spatial_autocorrelation":
+            raise RuntimeError("Pictologics feature morans_i_index_N365 is not one finite scalar")
+        return original(paths, families, workload, discrete)
+
+    monkeypatch.setattr(robustness.calculations, "_pictologics", prepare)
+    output = tmp_path / "worker.json"
+    assert robustness.worker("pictologics", fixtures, output, "test-run") == 0
+    result = json.loads(output.read_text())
+    check = next(check for check in result["checks"] if check["status"] == "characterized_rejection")
+    assert check["equivalence_verified"] is False
+    if mutation is None:
+        validate_worker(result, fixtures)
+        return
+    if mutation == "message":
+        check["error_message"] = "unexpected ROI implementation failure"
+    elif mutation == "module":
+        check["error_module"] = "other.module"
+    elif mutation == "type":
+        check["error_type"] = "ValueError"
+    elif mutation == "missing_module":
+        del check["error_module"]
+    elif mutation == "stage":
+        check["error_stage"] = "repeated_calculation"
+    elif mutation == "finding":
+        check["finding"] = "invented_explanation"
+    else:
+        # Swap the workload labels so the complete inventory still matches.
+        other = next(row for row in result["checks"] if row["fixture"] == "constant_roi" and row["workload"] == "morphology")
+        other["workload"], check["workload"] = check["workload"], other["workload"]
+    with pytest.raises(ValueError):
+        validate_worker(result, fixtures)
 
 
 def test_worker_fails_repeat_error_after_successful_degenerate_calculation(tmp_path, monkeypatch, fixtures):
@@ -294,11 +337,21 @@ def test_finite_constant_spatial_is_review_finding_not_accuracy_pass(tmp_path, m
      "MIRP native loading expected exactly one image", ("characterized_rejection", None)),
     ("mirp", "synthetic_ct", "texture", "RuntimeError", "builtins",
      "MIRP native loading expected exactly one image", None),
+    ("mirp", "empty_roi", "texture", "RuntimeError", "other.module",
+     "MIRP native loading expected exactly one image", None),
+    ("pyradiomics", "single_voxel_roi", "ivh", "ValueError", "builtins",
+     "mask only contains 1 segmented voxel! Cannot extract features for a single voxel.", None),
+    ("pictologics", "constant_roi", "morphology", "RuntimeError", "builtins",
+     "Pictologics feature morans_i_index_N365 is not one finite scalar", None),
+    ("pictologics", "synthetic_ct", "spatial_autocorrelation", "RuntimeError", "builtins",
+     "Pictologics feature morans_i_index_N365 is not one finite scalar", None),
     ("medimage", "constant_roi", "texture", "RuntimeError", "builtins",
      "MEDimage failed supported feature family histogram: index 1 is out of bounds for axis 0 with size 1",
      ("needs_review", "native_degenerate_error")),
     ("medimage", "constant_roi", "texture", "RuntimeError", "builtins",
      "MEDimage failed supported feature family histogram: unexpected internal error", None),
+    ("medimage", "constant_roi", "texture", "RuntimeError", "other.module",
+     "MEDimage failed supported feature family histogram: index 1 is out of bounds for axis 0 with size 1", None),
 ])
 def test_native_input_limits_are_scoped(adapter, fixture, workload, error_type, module, message, expected):
     assert robustness._native_error_outcome(adapter, fixture, workload, error_type, module, message) == expected
